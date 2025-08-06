@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avid Panel Plugin</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Setup Node.js compatibility before loading google-protobuf -->
+    <script>
+        // Ensure exports and module are available before loading google-protobuf
+        if (typeof exports === 'undefined') {
+            window.exports = {};
+        }
+        if (typeof module === 'undefined') {
+            window.module = { exports: window.exports };
+        }
+        
+        // Add comprehensive Google Closure Library polyfills for google-protobuf
+        if (typeof window.goog === 'undefined') {
+            window.goog = {};
+        }
+        
+        // Add goog.asserts with all needed methods
+        if (typeof window.goog.asserts === 'undefined') {
+            window.goog.asserts = {
+                assert: function(condition, message) {
+                    if (!condition) {
+                        throw new Error(message || 'Assertion failed');
+                    }
+                    return condition;
+                },
+                fail: function(message) {
+                    throw new Error(message || 'Assertion failed');
+                }
+            };
+        }
+        
+        // Add goog.crypt.base64 for protobuf
+        if (typeof window.goog.crypt === 'undefined') {
+            window.goog.crypt = {};
+        }
+        if (typeof window.goog.crypt.base64 === 'undefined') {
+            window.goog.crypt.base64 = {
+                encodeByteArray: function(bytes, opt_webSafe) {
+                    // Simple base64 encoding for protobuf
+                    let result = '';
+                    let i;
+                    for (i = 2; i < bytes.length; i += 3) {
+                        result += btoa(String.fromCharCode.apply(null, bytes.subarray(i-2, i+1)));
+                    }
+                    if (i === bytes.length + 1) {
+                        result += btoa(String.fromCharCode.apply(null, bytes.subarray(i-2, i-1))) + '=';
+                    } else if (i === bytes.length) {
+                        result += btoa(String.fromCharCode.apply(null, bytes.subarray(i-2, i))) + '==';
+                    }
+                    return result;
+                }
+            };
+        }
+    </script>
+    
+    <!-- Load browser-compatible google-protobuf library -->
+    <script src="google-protobuf-browser.js"></script>
+    
+    <!-- Setup essential compatibility for gRPC files -->
+    <script>
+        // Make jspb globally available after google-protobuf loads
+        window.jspb = jspb;
+        
+        // gRPC files need these specific goog functions - add minimal implementations
+        if (typeof window.goog === 'undefined') {
+            window.goog = jspb; // Use jspb as goog base
+        }
+        
+        // Essential goog functions needed by gRPC files
+        jspb.exportSymbol = function(name, object, opt_objectToExportTo) {
+            var parts = name.split('.');
+            var cur = opt_objectToExportTo || window;
+            for (var part; parts.length && (part = parts.shift());) {
+                if (parts.length) {
+                    cur[part] = cur[part] || {};
+                    cur = cur[part];
+                } else {
+                    cur[part] = object;
+                }
+            }
+        };
+        
+        // Add to both jspb and goog for compatibility
+        window.goog.exportSymbol = jspb.exportSymbol;
+        
+        // Object extend function needed by gRPC files
+        jspb.object = jspb.object || {};
+        jspb.object.extend = function(target, source) {
+            for (var key in source) {
+                if (source.hasOwnProperty(key)) {
+                    target[key] = source[key];
+                }
+            }
+            return target;
+        };
+        window.goog.object = jspb.object;
+        
+        // Add inherits function needed by protobuf files
+        jspb.inherits = function(childCtor, parentCtor) {
+            function tempCtor() {}
+            tempCtor.prototype = parentCtor.prototype;
+            childCtor.superClass_ = parentCtor.prototype;
+            childCtor.prototype = new tempCtor();
+            childCtor.prototype.constructor = childCtor;
+            
+            childCtor.base = function(me, methodName, var_args) {
+                var args = Array.prototype.slice.call(arguments, 2);
+                return parentCtor.prototype[methodName].apply(me, args);
+            };
+        };
+        window.goog.inherits = jspb.inherits;
+        
+        // Mock require function for the gRPC files
+        window.require = function(module) {
+            if (module === 'google-protobuf') {
+                return jspb;
+            }
+            if (module === 'grpc-web') {
+                return window.grpc.web;
+            }
+            if (module.includes('MCAPI_Types_pb.js')) {
+                return window.proto.mcapi || {};
+            }
+            if (module.includes('MCAPI_pb.js')) {
+                return window.proto.mcapi || {};
+            }
+            if (module.includes('descriptor_pb.js')) {
+                return {
+                    MethodOptions: {
+                        extensionsBinary: {},
+                        extensions: {}
+                    },
+                    FileOptions: {
+                        extensionsBinary: {},
+                        extensions: {}
+                    }
+                };
+            }
+            return {};
+        };
+        
+        // Global compatibility
+        if (typeof global === 'undefined') {
+            window.global = window;
+        }
+        
+        // Add grpc-web specific objects - make sure this is available before gRPC files load
+        window.grpc = window.grpc || {};
+        window.grpc.web = window.grpc.web || {};
+        
+        // Define MethodType enum
+        window.grpc.web.MethodType = {
+            UNARY: 'unary',
+            SERVER_STREAMING: 'server_streaming',
+            CLIENT_STREAMING: 'client_streaming', 
+            BIDI_STREAMING: 'bidi_streaming'
+        };
+        
+        // Define MethodDescriptor constructor
+        window.grpc.web.MethodDescriptor = function(path, methodType, requestType, responseType, requestSerializeFn, responseDeserializeFn) {
+            this.path = path;
+            this.methodType = methodType;
+            this.requestType = requestType;
+            this.responseType = responseType;
+            this.requestSerializeFn = requestSerializeFn;
+            this.responseDeserializeFn = responseDeserializeFn;
+        };
+        
+        // Define client base classes only if they don't already exist (development mode)
+        // In Media Composer, these should already be provided by the Panel SDK
+        if (typeof window.mcapi === 'undefined') {
+            // Development mode - provide mocks
+            console.log('🔧 Setting up development mode gRPC mocks');
+            window.grpc.web.AbstractClientBase = function() {};
+            window.grpc.web.GrpcWebClientBase = function(opt_options, opt_client) {
+                this.hostname_ = '';
+                this.credentials_ = null;
+                this.options_ = opt_options || {};
+                
+                this.rpcCall = function(method, request, metadata, methodDescriptor, callback) {
+                    console.warn('🔄 gRPC call attempted in development mode:', method);
+                    setTimeout(() => {
+                        if (callback) {
+                            callback(new Error('Not connected to Media Composer (development mode)'), null);
+                        }
+                    }, 100);
+                };
+                
+                this.unaryCall = this.rpcCall;
+            };
+        } else {
+            // Media Composer mode - use the real grpc.web that should already be available
+            console.log('🎬 Media Composer detected - using real gRPC.web implementation');
+            console.log('🔍 Available grpc.web:', window.grpc.web);
+            console.log('📦 grpc.web keys:', window.grpc.web ? Object.keys(window.grpc.web) : 'none');
+            
+            // Add missing GrpcWebClientBase to Media Composer's grpc.web
+            if (!window.grpc.web.GrpcWebClientBase) {
+                console.log('➕ Adding missing GrpcWebClientBase to Media Composer grpc.web');
+                window.grpc.web.GrpcWebClientBase = function(opt_options, opt_client) {
+                    this.hostname_ = '';
+                    this.credentials_ = null;
+                    this.options_ = opt_options || {};
+                    
+                    // Real implementation for Media Composer API calls
+                    this.rpcCall = function(method, request, metadata, methodDescriptor, callback) {
+                        console.log('🎬 Making real Media Composer gRPC call:', method);
+                        
+                        try {
+                            // Try a completely different approach - maybe send minimal gRPC request
+                            console.log('🧪 Trying minimal gRPC request approach...');
+                            
+                            // For some APIs, we might need to send a minimal but valid protobuf message
+                            // Let's try creating a minimal request manually
+                            const requestBytes = request.serializeBinary();
+                            console.log('📦 Original request serialized, size:', requestBytes.length, 'bytes');
+                            
+                            // Now we expect requests to have proper size since we're setting header+body
+                            let finalRequestBytes = requestBytes;
+                            if (requestBytes.length === 0) {
+                                console.error('❌ Request is still 0 bytes! Header+body structure may be incomplete');
+                                console.log('🔧 Falling back to empty buffer...');
+                                finalRequestBytes = new Uint8Array(0);
+                            } else {
+                                console.log('✅ Request has proper size with header+body structure');
+                            }
+                            
+                            console.log('🔍 Request object:', request);
+                            console.log('🔍 Method descriptor:', methodDescriptor);
+                            
+                            // Prepare headers for gRPC-Web  
+                            const headers = {
+                                'Content-Type': 'application/grpc-web+proto',
+                                'X-Grpc-Web': '1'
+                            };
+                            
+                            // Add metadata (like access token) to headers - official pattern
+                            if (metadata) {
+                                Object.keys(metadata).forEach(key => {
+                                    headers[key.toLowerCase()] = metadata[key];
+                                });
+                            }
+                            
+                            console.log('🔑 Headers:', headers);
+                            
+                            // Make the HTTP request to Media Composer's gRPC gateway
+                            fetch(method, {
+                                method: 'POST',
+                                headers: headers,
+                                body: finalRequestBytes,
+                                mode: 'cors',
+                                credentials: 'include'
+                            })
+                            .then(response => {
+                                console.log('📡 Response received:', response.status, response.statusText);
+                                console.log('📋 Response headers:');
+                                for (let [key, value] of response.headers.entries()) {
+                                    console.log(`   ${key}: ${value}`);
+                                }
+                                console.log('📄 Response URL:', response.url);
+                                console.log('📄 Response type:', response.type);
+                                
+                                if (!response.ok) {
+                                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                                }
+                                
+                                return response.arrayBuffer();
+                            })
+                            .then(responseBytes => {
+                                console.log('📦 Response received, size:', responseBytes.byteLength, 'bytes');
+                                
+                                // Handle empty response
+                                if (responseBytes.byteLength === 0) {
+                                    console.log('📭 Empty response - creating default response object');
+                                    try {
+                                        // Create an empty instance of the expected response type
+                                        const emptyResponse = new methodDescriptor.responseType();
+                                        console.log('✅ Empty response object created successfully');
+                                        callback(null, emptyResponse);
+                                        return;
+                                    } catch (emptyError) {
+                                        console.error('❌ Failed to create empty response:', emptyError);
+                                        callback(new Error('Received empty response from Media Composer'), null);
+                                        return;
+                                    }
+                                }
+                                
+                                try {
+                                    // Check if we have enough bytes for gRPC-Web header
+                                    if (responseBytes.byteLength < 5) {
+                                        console.log('⚠️ Response too small for gRPC-Web header, treating as raw message');
+                                        // Try to deserialize directly
+                                        const messageBytes = new Uint8Array(responseBytes);
+                                        const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                                        console.log('✅ Raw response deserialized successfully');
+                                        callback(null, responseMessage);
+                                        return;
+                                    }
+                                    
+                                    // gRPC-Web responses have a 5-byte header we need to skip
+                                    const dataView = new DataView(responseBytes);
+                                    const messageLength = dataView.getUint32(1, false); // big-endian
+                                    const messageBytes = new Uint8Array(responseBytes, 5, messageLength);
+                                    
+                                    console.log('📦 Message extracted, size:', messageBytes.length, 'bytes');
+                                    
+                                    // Deserialize using the response type from the method descriptor
+                                    const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                                    console.log('✅ Response deserialized successfully');
+                                    
+                                    callback(null, responseMessage);
+                                } catch (deserError) {
+                                    console.error('❌ Failed to deserialize response:', deserError);
+                                    console.log('🔍 Raw response bytes:', new Uint8Array(responseBytes));
+                                    callback(deserError, null);
+                                }
+                            })
+                            .catch(networkError => {
+                                console.error('❌ Network/HTTP error:', networkError);
+                                callback(networkError, null);
+                            });
+                            
+                        } catch (error) {
+                            console.error('❌ Request preparation failed:', error);
+                            setTimeout(() => callback(error, null), 10);
+                        }
+                    };
+                    
+                    this.unaryCall = this.rpcCall;
+                };
+            }
+        }
+        
+        // Initialize proto namespace
+        window.proto = window.proto || {};
+        window.proto.mcapi = window.proto.mcapi || {};
+    </script>
+    
+    <!-- Load gRPC-web dependencies -->
+    <script src="/grpc-web/MCAPI_Types_pb.js"></script>
+    <script src="/grpc-web/MCAPI_pb.js"></script>
+    <script src="/grpc-web/MCAPI_grpc_web_pb.js"></script>
+    
+    <!-- Simple debug to confirm proto objects are loaded -->
+    <script>
+        console.log('✅ Proto objects loaded successfully');
+        console.log('📦 Available clients:', window.proto.mcapi.MCAPIClient ? 'MCAPIClient' : 'none', window.proto.mcapi.MCAPIPromiseClient ? 'MCAPIPromiseClient' : 'none');
+    </script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Avid Panel SDK Plugin</h1>
+            <div id="connection-status" class="status-badge">Initializing...</div>
+        </header>
+        
+        <main>
+            <!-- Connection Info -->
+            <section class="info-panel">
+                <h2>Connection Information</h2>
+                <div id="connection-info">
+                    <p>Waiting for Media Composer...</p>
+                </div>
+            </section>
+            
+            <!-- Project Info -->
+            <section class="info-panel">
+                <h2>Project Information</h2>
+                <div id="project-info">
+                    <p>No project loaded</p>
+                </div>
+            </section>
+            
+            <!-- Bin Contents -->
+            <section class="info-panel">
+                <h2>Current Bin</h2>
+                <div id="bin-contents">
+                    <p>Select a bin in Media Composer</p>
+                </div>
+            </section>
+            
+            <!-- Event Log -->
+            <section class="info-panel">
+                <h2>Event Log</h2>
+                <div id="event-log"></div>
+            </section>
+            
+            <!-- Actions -->
+            <section class="actions-panel">
+                <h2>Actions</h2>
+                <button id="refresh-btn">Refresh Project Info</button>
+                <button id="get-bins-btn">Get All Bins</button>
+                <button id="clear-log-btn">Clear Event Log</button>
+            </section>
+        </main>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>

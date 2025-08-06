@@ -1,0 +1,47 @@
+{
+    "category": "suite-plugin",
+    "name": "com.limewoodsw.avid-panel-sdk-server",
+    "version": "1.0.0",
+    "displayName": "Local Server Proto 1",
+    "description": "Development panel for testing Panel SDK integration",
+    "usesApi": [
+		"avid.mediacomposer.general",
+		"avid.mediacomposer.timelineEditing",
+		"avid.mediacomposer.command",
+        "avid.mediacomposer.bin",
+		"avid.mediacomposer.transportcontrols"
+    ],
+    "subscribesToChannels": [],
+    "entitlements": [],
+    "companyPrefix": "limewoodsw",
+    "appShortName": "panel.sdk.dev",
+    "uiItems": [
+        {
+            "type": "dropdown",
+            "menuName": "Tools",
+            "id": "local-server-proto-1",
+            "displayText": "Local Server Proto 1",
+            "windowTitle": "Local Server Proto 1",
+            "icon": "static/icon.svg",
+            "url": "http://localhost:3000"
+        }
+    ],
+    "windowSize": {
+        "initial": {
+            "width": "800",
+            "height": "600"
+        },
+        "minimum": {
+            "width": "600",
+            "height": "400"
+        }
+    },
+    "targetHosts": [
+        "MediaComposer"
+    ],
+    "allowedDomains": [
+        "localhost:3000"
+    ],
+    "windowStyle": "floating",
+    "singleton": true
+}

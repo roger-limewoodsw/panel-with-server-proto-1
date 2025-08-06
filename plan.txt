@@ -1,0 +1,727 @@
+# Avid Panel SDK Plugin Implementation Plan
+
+## Project Overview
+Create a working Avid Media Composer Panel SDK plugin with an external Node.js/Express server that properly handles gRPC-web dependencies and communicates with Media Composer.
+
+## Project Structure
+```
+avid-panel-plugin/
+├── server/
+│   ├── server.js           # Express server
+│   ├── package.json        # Node dependencies
+│   └── public/
+│       ├── index.html      # Main panel UI
+│       ├── app.js          # Application logic
+│       ├── styles.css      # Panel styles
+│       └── grpc-web/       # Pre-compiled gRPC files (copied from SDK)
+│           ├── MCAPI_pb.js
+│           ├── MCAPI_Types_pb.js
+│           └── MCAPI_grpc_web_pb.js
+├── plugin/
+│   ├── avid-manifest.json  # Plugin configuration
+│   └── static/
+│       └── icon.svg        # Plugin icon
+└── scripts/
+    ├── install-plugin.sh   # Mac installation script
+    └── install-plugin.bat  # Windows installation script
+
+```
+
+## Step-by-Step Implementation
+
+### Step 1: Initialize the Project
+
+Create the project structure and initialize npm:
+
+```bash
+mkdir avid-panel-plugin
+cd avid-panel-plugin
+mkdir -p server/public/grpc-web plugin/static scripts
+cd server
+npm init -y
+npm install express cors morgan
+npm install --save-dev nodemon
+```
+
+### Step 2: Create the Express Server
+
+**File: `server/server.js`**
+
+```javascript
+const express = require('express');
+const path = require('path');
+const cors = require('cors');
+const morgan = require('morgan');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Logging middleware
+app.use(morgan('dev'));
+
+// CORS configuration - important for Media Composer communication
+app.use(cors({
+    origin: '*', // Media Composer will handle security via allowedDomains
+    credentials: true
+}));
+
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/grpc-web', express.static(path.join(__dirname, 'public', 'grpc-web')));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'running', timestamp: new Date().toISOString() });
+});
+
+// Main panel route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`\n🎬 Avid Panel SDK Server Running`);
+    console.log(`📡 Local: http://localhost:${PORT}`);
+    console.log(`📂 Serving from: ${path.join(__dirname, 'public')}`);
+    console.log(`\n⚠️  Remember to:`);
+    console.log(`   1. Copy gRPC-web files from Panel SDK to public/grpc-web/`);
+    console.log(`   2. Install the plugin (.avpi) file in Media Composer`);
+    console.log(`   3. Ensure Feature Toggle Files are installed\n`);
+});
+```
+
+### Step 3: Create the Panel UI
+
+**File: `server/public/index.html`**
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avid Panel Plugin</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Load gRPC-web dependencies first -->
+    <script src="/grpc-web/MCAPI_Types_pb.js"></script>
+    <script src="/grpc-web/MCAPI_pb.js"></script>
+    <script src="/grpc-web/MCAPI_grpc_web_pb.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Avid Panel SDK Plugin</h1>
+            <div id="connection-status" class="status-badge">Initializing...</div>
+        </header>
+        
+        <main>
+            <!-- Connection Info -->
+            <section class="info-panel">
+                <h2>Connection Information</h2>
+                <div id="connection-info">
+                    <p>Waiting for Media Composer...</p>
+                </div>
+            </section>
+            
+            <!-- Project Info -->
+            <section class="info-panel">
+                <h2>Project Information</h2>
+                <div id="project-info">
+                    <p>No project loaded</p>
+                </div>
+            </section>
+            
+            <!-- Bin Contents -->
+            <section class="info-panel">
+                <h2>Current Bin</h2>
+                <div id="bin-contents">
+                    <p>Select a bin in Media Composer</p>
+                </div>
+            </section>
+            
+            <!-- Event Log -->
+            <section class="info-panel">
+                <h2>Event Log</h2>
+                <div id="event-log"></div>
+            </section>
+            
+            <!-- Actions -->
+            <section class="actions-panel">
+                <h2>Actions</h2>
+                <button id="refresh-btn">Refresh Project Info</button>
+                <button id="get-bins-btn">Get All Bins</button>
+                <button id="clear-log-btn">Clear Event Log</button>
+            </section>
+        </main>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
+```
+
+### Step 4: Create the Application Logic
+
+**File: `server/public/app.js`**
+
+```javascript
+// Avid Panel SDK Application Logic
+
+class AvidPanelApp {
+    constructor() {
+        this.client = null;
+        this.accessToken = null;
+        this.serverAddress = null;
+        this.isConnected = false;
+        
+        this.initialize();
+    }
+    
+    initialize() {
+        // Wait for the mcapi object to be available
+        if (typeof mcapi === 'undefined') {
+            // Running outside of Media Composer (development mode)
+            this.showStatus('Running in standalone mode (not in Media Composer)', 'warning');
+            this.setupDevelopmentMode();
+        } else {
+            // Running inside Media Composer
+            this.setupMediaComposerConnection();
+        }
+        
+        this.setupEventHandlers();
+    }
+    
+    setupMediaComposerConnection() {
+        try {
+            // Get access token and server address from Media Composer
+            this.accessToken = mcapi.getAccessToken();
+            this.serverAddress = mcapi.getServerAddress();
+            
+            // Initialize gRPC client
+            this.client = new proto.avid.protobuf.core.rpc.commands.MCAPIClient(
+                this.serverAddress,
+                null,
+                null
+            );
+            
+            // Register for Media Composer notifications
+            mcapi.onEvent.connect((eventName, eventData) => {
+                this.handleMediaComposerEvent(eventName, eventData);
+            });
+            
+            this.isConnected = true;
+            this.showStatus('Connected to Media Composer', 'connected');
+            this.updateConnectionInfo();
+            
+            // Get initial project info
+            this.getProjectInfo();
+            
+        } catch (error) {
+            console.error('Failed to connect to Media Composer:', error);
+            this.showStatus('Connection failed', 'error');
+        }
+    }
+    
+    setupDevelopmentMode() {
+        // Development mode - show sample data
+        const mockInfo = `
+            <div class="info-item">
+                <strong>Mode:</strong> Development (No MC Connection)
+            </div>
+            <div class="info-item">
+                <strong>Server:</strong> http://localhost:3000
+            </div>
+            <div class="info-item">
+                <strong>Note:</strong> Launch from Media Composer to connect
+            </div>
+        `;
+        document.getElementById('connection-info').innerHTML = mockInfo;
+    }
+    
+    setupEventHandlers() {
+        // Button handlers
+        document.getElementById('refresh-btn').addEventListener('click', () => {
+            this.getProjectInfo();
+        });
+        
+        document.getElementById('get-bins-btn').addEventListener('click', () => {
+            this.getAllBins();
+        });
+        
+        document.getElementById('clear-log-btn').addEventListener('click', () => {
+            document.getElementById('event-log').innerHTML = '';
+        });
+    }
+    
+    handleMediaComposerEvent(eventName, eventData) {
+        this.logEvent(eventName, eventData);
+        
+        // Handle specific events
+        switch (eventName) {
+            case 'ProjectOpened':
+                this.getProjectInfo();
+                break;
+            case 'ProjectClosed':
+                this.updateProjectInfo(null);
+                break;
+            case 'BinRowSelectionChanged':
+                const data = JSON.parse(eventData);
+                this.onBinSelectionChanged(data.binAbsolutePath);
+                break;
+            case 'MobAdded':
+                const mobData = JSON.parse(eventData);
+                this.logEvent('Media Added', `Mob ID: ${mobData.mobId}`);
+                break;
+        }
+    }
+    
+    // API Calls
+    async getProjectInfo() {
+        if (!this.isConnected) {
+            this.showStatus('Not connected to Media Composer', 'error');
+            return;
+        }
+        
+        try {
+            const request = new proto.avid.protobuf.core.rpc.commands.GetCurrentProjectReq();
+            const metadata = { 'accesstoken': this.accessToken };
+            
+            this.client.getCurrentProject(request, metadata, (err, response) => {
+                if (err) {
+                    console.error('Error getting project info:', err);
+                    this.updateProjectInfo(null);
+                } else {
+                    this.updateProjectInfo(response.toObject());
+                }
+            });
+        } catch (error) {
+            console.error('Failed to get project info:', error);
+        }
+    }
+    
+    async getAllBins() {
+        if (!this.isConnected) {
+            this.showStatus('Not connected to Media Composer', 'error');
+            return;
+        }
+        
+        try {
+            const request = new proto.avid.protobuf.core.rpc.commands.GetBinsReq();
+            request.setRecursive(true);
+            
+            const metadata = { 'accesstoken': this.accessToken };
+            
+            this.client.getBins(request, metadata, (err, response) => {
+                if (err) {
+                    console.error('Error getting bins:', err);
+                    this.logEvent('Error', 'Failed to get bins');
+                } else {
+                    const bins = response.getBinsList();
+                    this.logEvent('Bins Retrieved', `Found ${bins.length} bins`);
+                    
+                    // Display bin names
+                    const binNames = bins.map(bin => bin.getDisplayname()).join(', ');
+                    this.updateBinContents(`Bins: ${binNames}`);
+                }
+            });
+        } catch (error) {
+            console.error('Failed to get bins:', error);
+        }
+    }
+    
+    onBinSelectionChanged(binPath) {
+        this.updateBinContents(`Selected: ${binPath}`);
+    }
+    
+    // UI Updates
+    updateConnectionInfo() {
+        const info = `
+            <div class="info-item">
+                <strong>Status:</strong> Connected
+            </div>
+            <div class="info-item">
+                <strong>Access Token:</strong> ${this.accessToken ? this.accessToken.substring(0, 8) + '...' : 'N/A'}
+            </div>
+            <div class="info-item">
+                <strong>Server:</strong> ${this.serverAddress || 'N/A'}
+            </div>
+        `;
+        document.getElementById('connection-info').innerHTML = info;
+    }
+    
+    updateProjectInfo(projectData) {
+        if (projectData) {
+            const info = `
+                <div class="info-item">
+                    <strong>Name:</strong> ${projectData.name || 'Unknown'}
+                </div>
+                <div class="info-item">
+                    <strong>Type:</strong> ${projectData.type || 'Unknown'}
+                </div>
+                <div class="info-item">
+                    <strong>Path:</strong> ${projectData.path || 'Unknown'}
+                </div>
+            `;
+            document.getElementById('project-info').innerHTML = info;
+        } else {
+            document.getElementById('project-info').innerHTML = '<p>No project loaded</p>';
+        }
+    }
+    
+    updateBinContents(content) {
+        document.getElementById('bin-contents').innerHTML = `<p>${content}</p>`;
+    }
+    
+    showStatus(message, type) {
+        const statusEl = document.getElementById('connection-status');
+        statusEl.textContent = message;
+        statusEl.className = `status-badge ${type}`;
+    }
+    
+    logEvent(eventName, data) {
+        const logEl = document.getElementById('event-log');
+        const timestamp = new Date().toLocaleTimeString();
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = `
+            <span class="timestamp">${timestamp}</span>
+            <strong>${eventName}</strong>
+            ${data ? `: ${JSON.stringify(data).substring(0, 100)}` : ''}
+        `;
+        logEl.insertBefore(entry, logEl.firstChild);
+        
+        // Keep only last 20 entries
+        while (logEl.children.length > 20) {
+            logEl.removeChild(logEl.lastChild);
+        }
+    }
+}
+
+// Initialize app when page loads
+window.addEventListener('load', () => {
+    window.avidPanel = new AvidPanelApp();
+});
+```
+
+### Step 5: Create the Styles
+
+**File: `server/public/styles.css`**
+
+```css
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    line-height: 1.6;
+}
+
+#app {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    background: #2a2a2a;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+h1 {
+    color: #fff;
+    font-size: 24px;
+}
+
+h2 {
+    color: #fff;
+    font-size: 18px;
+    margin-bottom: 15px;
+}
+
+.status-badge {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.status-badge.connected {
+    background: #4caf50;
+    color: white;
+}
+
+.status-badge.warning {
+    background: #ff9800;
+    color: white;
+}
+
+.status-badge.error {
+    background: #f44336;
+    color: white;
+}
+
+main {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 20px;
+}
+
+.info-panel, .actions-panel {
+    background: #2a2a2a;
+    padding: 20px;
+    border-radius: 8px;
+}
+
+.info-item {
+    margin-bottom: 10px;
+    padding: 8px;
+    background: #333;
+    border-radius: 4px;
+}
+
+.info-item strong {
+    color: #4fc3f7;
+    margin-right: 8px;
+}
+
+#event-log {
+    max-height: 300px;
+    overflow-y: auto;
+    background: #1a1a1a;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.log-entry {
+    margin-bottom: 8px;
+    padding: 6px;
+    background: #333;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.timestamp {
+    color: #888;
+    margin-right: 8px;
+}
+
+button {
+    background: #4fc3f7;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    margin-right: 10px;
+    margin-top: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background: #29b6f6;
+}
+
+button:active {
+    transform: translateY(1px);
+}
+```
+
+### Step 6: Create the Plugin Manifest
+
+**File: `plugin/avid-manifest.json`**
+
+```json
+{
+    "category": "suite-plugin",
+    "name": "com.yourcompany.panel.development",
+    "version": "1.0.0",
+    "displayName": "Panel SDK Development",
+    "description": "Development panel for testing Panel SDK integration",
+    "usesApi": [
+        "avid.mediacomposer.general",
+        "avid.mediacomposer.bin",
+        "avid.mediacomposer.timelineEditing"
+    ],
+    "subscribesToChannels": [],
+    "entitlements": [],
+    "companyPrefix": "yourcompany",
+    "appShortName": "panel.sdk.dev",
+    "uiItems": [
+        {
+            "type": "dropdown",
+            "menuName": "Tools",
+            "id": "panel-sdk-development",
+            "displayText": "Panel SDK Development",
+            "windowTitle": "Panel SDK Dev",
+            "icon": "static/icon.svg",
+            "url": "http://localhost:3000"
+        }
+    ],
+    "windowSize": {
+        "initial": {
+            "width": "800",
+            "height": "600"
+        },
+        "minimum": {
+            "width": "600",
+            "height": "400"
+        }
+    },
+    "targetHosts": [
+        "MediaComposer"
+    ],
+    "allowedDomains": [
+        "localhost:3000"
+    ],
+    "windowStyle": "floating",
+    "singleton": true
+}
+```
+
+### Step 7: Create a Simple Icon
+
+**File: `plugin/static/icon.svg`**
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+    <rect x="3" y="3" width="18" height="18" rx="2" fill="#4fc3f7"/>
+    <path d="M8 12h8M12 8v8" stroke="white" stroke-width="2" stroke-linecap="round"/>
+</svg>
+```
+
+### Step 8: Create Installation Scripts
+
+**File: `scripts/install-plugin.sh`** (Mac)
+
+```bash
+#!/bin/bash
+
+# Mac installation script for Avid Panel SDK plugin
+
+PLUGIN_DIR="../plugin"
+INSTALL_DIR="/Library/Application Support/Avid/PanelSDKPlugins"
+
+echo "🎬 Installing Avid Panel SDK Plugin..."
+
+# Create plugin directory if it doesn't exist
+sudo mkdir -p "$INSTALL_DIR"
+
+# Remove old version if exists
+if [ -f "$INSTALL_DIR/panel-sdk-dev.avpi" ]; then
+    echo "Removing old version..."
+    sudo rm "$INSTALL_DIR/panel-sdk-dev.avpi"
+fi
+
+# Create .avpi file
+cd "$PLUGIN_DIR"
+zip -r panel-sdk-dev.avpi avid-manifest.json static/
+
+# Move to installation directory
+sudo mv panel-sdk-dev.avpi "$INSTALL_DIR/"
+
+echo "✅ Plugin installed successfully!"
+echo "📍 Location: $INSTALL_DIR/panel-sdk-dev.avpi"
+echo ""
+echo "Next steps:"
+echo "1. Start the development server: npm run dev"
+echo "2. Restart Media Composer"
+echo "3. Open Tools > Panel SDK Development"
+```
+
+### Step 9: Update package.json
+
+**File: `server/package.json`**
+
+```json
+{
+  "name": "avid-panel-sdk-server",
+  "version": "1.0.0",
+  "description": "Development server for Avid Panel SDK plugin",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "install-plugin-mac": "cd ../scripts && bash install-plugin.sh",
+    "install-plugin-win": "cd ..\\scripts && install-plugin.bat"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+```
+
+## Implementation Steps for Claude Code
+
+1. **Create the project structure** exactly as shown above
+2. **Copy the gRPC-web files** from your Panel SDK bundle to `server/public/grpc-web/`
+3. **Install Node.js dependencies** in the server directory
+4. **Create all the files** with the content provided above
+5. **Make the installation script executable**: `chmod +x scripts/install-plugin.sh`
+6. **Install the plugin**: Run the installation script
+7. **Start the development server**: `npm run dev` in the server directory
+8. **Test in Media Composer**: Launch MC and open Tools > Panel SDK Development
+
+## Critical Implementation Notes
+
+### MUST DO:
+- Copy the three gRPC-web JavaScript files from the Panel SDK bundle to `server/public/grpc-web/`
+- Ensure the Feature Toggle Files (FTF) are installed on your development machine
+- Use exactly "localhost:3000" in allowedDomains (not "127.0.0.1:3000")
+- The avid-manifest.json must be at the root of the .avpi file
+
+### MUST NOT DO:
+- Don't try to compile the .proto files yourself
+- Don't use webpack or bundlers for the gRPC files
+- Don't include "http://" in the allowedDomains array
+- Don't use "avid" as your companyPrefix in production
+
+## Testing Checklist
+
+- [ ] Server starts without errors
+- [ ] `/health` endpoint returns JSON response
+- [ ] Plugin appears in Media Composer Tools menu
+- [ ] Panel window opens when selected
+- [ ] Connection status shows "Connected to Media Composer"
+- [ ] Access token is retrieved successfully
+- [ ] Event notifications are received (open/close project)
+- [ ] API calls work (Get Project Info, Get Bins)
+
+## Troubleshooting Guide
+
+If the plugin doesn't appear:
+1. Check Feature Toggle Files are installed
+2. Verify .avpi structure (manifest at root)
+3. Check Activity Monitor/Task Manager for avid-api-gateway process
+4. Try "panelsdk reinit" in MC Console (Ctrl+6)
+
+If connection fails:
+1. Check ports 4920, 4930, 9100-9110 are available
+2. Verify gRPC-web files are in place
+3. Check browser console for errors
+4. Verify allowedDomains matches exactly
+
+## Next Steps After Basic Setup Works
+
+1. Implement more API calls (import/export, timeline editing)
+2. Add drag-and-drop functionality
+3. Implement proper error handling and retry logic
+4. Add UI for specific workflow needs
+5. Create production build process with proper signing
