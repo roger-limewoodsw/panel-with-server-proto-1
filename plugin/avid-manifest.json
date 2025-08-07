@@ -40,7 +40,8 @@
         "MediaComposer"
     ],
     "allowedDomains": [
-        "localhost:3000"
+        "localhost:3000",
+        "cdn.jsdelivr.net"
     ],
     "windowStyle": "floating",
     "singleton": true

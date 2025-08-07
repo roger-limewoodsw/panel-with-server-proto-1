@@ -1,436 +1,483 @@
-// Avid Panel SDK Application Logic
+// Avid Panel SDK Plugin - Main Application
+// This file handles all communication with Media Composer via gRPC-Web
 
-class AvidPanelApp {
-    constructor() {
-        this.client = null;
-        this.accessToken = null;
-        this.serverAddress = null;
-        this.isConnected = false;
-        
-        this.initialize();
+// Global variables
+let grpcClient = null;
+let isConnected = false;
+let accessToken = null;
+
+// Fixed gRPC-Web bridge with better response handling
+function installGrpcBridge() {
+    if (!window.grpc || !window.grpc.web || !window.grpc.web.GrpcWebClientBase) {
+        console.warn('⚠️ GrpcWebClientBase not available yet');
+        return false;
     }
-    
-    initialize() {
-        // Wait for the mcapi object to be available
-        if (typeof mcapi === 'undefined') {
-            // Running outside of Media Composer (development mode)
-            this.showStatus('Running in standalone mode (not in Media Composer)', 'warning');
-            this.setupDevelopmentMode();
-        } else {
-            // Running inside Media Composer
-            this.setupMediaComposerConnection();
-        }
-        
-        this.setupEventHandlers();
-    }
-    
-    setupMediaComposerConnection() {
-        try {
-            // Get access token and server address from Media Composer
-            this.accessToken = mcapi.getAccessToken();
-            this.serverAddress = mcapi.getGatewayServerAddress();
-            
-            // Initialize gRPC client
-            if (typeof proto !== 'undefined' && proto.mcapi && proto.mcapi.MCAPIClient) {
-                this.client = new proto.mcapi.MCAPIClient(
-                    this.serverAddress,
-                    null,
-                    null
-                );
-                console.log('✅ MCAPIClient initialized successfully');
-            } else {
-                console.error('❌ Proto objects not loaded properly');
-                console.error('Available proto:', proto);
-                throw new Error('gRPC proto files not loaded');
-            }
-            
-            // Register for Media Composer notifications
-            mcapi.onEvent.connect((eventName, eventData) => {
-                this.handleMediaComposerEvent(eventName, eventData);
-            });
-            
-            this.isConnected = true;
-            this.showStatus('Connected to Media Composer', 'connected');
-            this.updateConnectionInfo();
-            
-            // Get initial project info
-            this.getProjectInfo();
-            
-        } catch (error) {
-            console.error('Failed to connect to Media Composer:', error);
-            this.showStatus('Connection failed', 'error');
-        }
-    }
-    
-    setupDevelopmentMode() {
-        // Development mode - show sample data and test protobuf serialization
-        const mockInfo = `
-            <div class="info-item">
-                <strong>Mode:</strong> Development (No MC Connection)
-            </div>
-            <div class="info-item">
-                <strong>Server:</strong> http://localhost:3000
-            </div>
-            <div class="info-item">
-                <strong>Note:</strong> Launch from Media Composer to connect
-            </div>
-        `;
-        document.getElementById('connection-info').innerHTML = mockInfo;
-        
-        // Test protobuf serialization in development mode
-        this.testProtobufSerialization();
-    }
-    
-    testProtobufSerialization() {
-        console.log('🧪 Testing protobuf serialization in development mode...');
-        
-        // Test EchoRequest using official pattern
-        if (proto.mcapi && proto.mcapi.EchoRequest) {
-            const echoRequest = new proto.mcapi.EchoRequest();
-            console.log('📦 Empty EchoRequest size:', echoRequest.serializeBinary().length, 'bytes');
-            
-            // Only set body (official pattern)
-            if (proto.mcapi.EchoRequestBody) {
-                const body = new proto.mcapi.EchoRequestBody();
-                if (typeof body.setMessage === 'function') {
-                    body.setMessage('test');
-                }
-                echoRequest.setBody(body);
-            }
-            console.log('📦 EchoRequest with body-only size:', echoRequest.serializeBinary().length, 'bytes');
-        }
-        
-        // Test GetAppInfoRequest using official pattern
-        if (proto.mcapi && proto.mcapi.GetAppInfoRequest) {
-            const appInfoRequest = new proto.mcapi.GetAppInfoRequest();
-            console.log('📦 Empty GetAppInfoRequest size:', appInfoRequest.serializeBinary().length, 'bytes');
-            
-            // Only set body (official pattern)
-            if (proto.mcapi.GetAppInfoRequestBody) {
-                appInfoRequest.setBody(new proto.mcapi.GetAppInfoRequestBody());
-            }
-            console.log('📦 GetAppInfoRequest with body-only size:', appInfoRequest.serializeBinary().length, 'bytes');
-        }
-        
-        console.log('✅ Protobuf serialization test complete');
-    }
-    
-    setupEventHandlers() {
-        // Button handlers
-        document.getElementById('refresh-btn').addEventListener('click', () => {
-            this.getProjectInfo();
-        });
-        
-        document.getElementById('get-bins-btn').addEventListener('click', () => {
-            this.getAllBins();
-        });
-        
-        document.getElementById('clear-log-btn').addEventListener('click', () => {
-            document.getElementById('event-log').innerHTML = '';
-        });
-    }
-    
-    handleMediaComposerEvent(eventName, eventData) {
-        this.logEvent(eventName, eventData);
-        
-        // Handle specific events
-        switch (eventName) {
-            case 'ProjectOpened':
-                this.getProjectInfo();
-                break;
-            case 'ProjectClosed':
-                this.updateProjectInfo(null);
-                break;
-            case 'BinRowSelectionChanged':
-                const data = JSON.parse(eventData);
-                this.onBinSelectionChanged(data.binAbsolutePath);
-                break;
-            case 'MobAdded':
-                const mobData = JSON.parse(eventData);
-                this.logEvent('Media Added', `Mob ID: ${mobData.mobId}`);
-                break;
-        }
-    }
-    
-    // API Calls
-    async getProjectInfo() {
-        if (!this.isConnected) {
-            this.showStatus('Not connected to Media Composer', 'error');
-            return;
-        }
+
+    window.grpc.web.GrpcWebClientBase.prototype.rpcCall = function(method, request, metadata, methodDescriptor, callback) {
+        console.log('🎬 Making gRPC-web request:', method);
+        console.log('📦 Request payload size:', request.serializeBinary().length, 'bytes');
         
         try {
-            if (typeof proto === 'undefined' || !proto.mcapi) {
-                console.error('Proto objects not available');
-                return;
-            }
+            const requestBytes = request.serializeBinary();
             
-            // Debug: Show available client methods
-            console.log('🔍 Available client methods:', Object.getOwnPropertyNames(this.client.__proto__).filter(name => !name.startsWith('_')));
+            // Prepare headers for gRPC-Web
+            const headers = {
+                'Content-Type': 'application/grpc-web+proto',
+                'X-Grpc-Web': '1',
+                // Add accept header to specify what we expect
+                'Accept': 'application/grpc-web+proto',
+                // Limit response size hints
+                'grpc-timeout': '30S'
+            };
             
-            // Debug: Check if constructors are available
-            console.log('🔍 Debugging constructor availability...');
-            console.log('GetAppInfoRequest available?', typeof proto.mcapi.GetAppInfoRequest);
-            console.log('GetAppInfoRequestBody available?', typeof proto.mcapi.GetAppInfoRequestBody);
-            
-            // Try creating a simple test to see what's happening
-            if (typeof proto.mcapi.GetAppInfoRequest === 'function') {
-                const testRequest = new proto.mcapi.GetAppInfoRequest();
-                console.log('📦 Empty request serializes to:', testRequest.serializeBinary().length, 'bytes');
-                
-                if (typeof proto.mcapi.GetAppInfoRequestBody === 'function') {
-                    const testBody = new proto.mcapi.GetAppInfoRequestBody();
-                    console.log('📦 Empty body serializes to:', testBody.serializeBinary().length, 'bytes');
-                    
-                    // Debug the BinaryWriter itself
-                    console.log('🔍 Testing jspb.BinaryWriter directly...');
-                    
-                    // First, check if jspb.BinaryEncoder exists
-                    console.log('🔍 BinaryEncoder available?', typeof jspb.BinaryEncoder);
-                    console.log('🔍 BinaryEncoder constructor:', jspb.BinaryEncoder);
-                    
-                    const writer = new jspb.BinaryWriter();
-                    console.log('📝 Created BinaryWriter:', writer);
-                    console.log('📝 Writer methods:', Object.getOwnPropertyNames(writer.__proto__));
-                    
-                    // Test writing something simple
-                    try {
-                        console.log('📝 Writer state before write:', {
-                            blocks: writer.blocks_.length,
-                            totalLength: writer.totalLength_,
-                            encoder: writer.encoder_
-                        });
-                        
-                        writer.writeString(1, 'test');
-                        
-                        console.log('📝 Writer state after writeString:', {
-                            blocks: writer.blocks_.length,
-                            totalLength: writer.totalLength_,
-                            encoder: writer.encoder_
-                        });
-                        
-                        const result = writer.getResultBuffer();
-                        console.log('📦 BinaryWriter test result:', result, 'length:', result.length);
-                        console.log('📦 Result type:', typeof result, result.constructor.name);
-                        
-                        // Check the encoder specifically
-                        if (writer.encoder_) {
-                            console.log('📝 Encoder length:', writer.encoder_.length());
-                            console.log('📝 Encoder end():', writer.encoder_.end());
-                        }
-                    } catch (writerError) {
-                        console.error('❌ BinaryWriter test failed:', writerError);
-                    }
-                    
-                    testRequest.setBody(testBody);
-                    console.log('📦 Request with body serializes to:', testRequest.serializeBinary().length, 'bytes');
-                    console.log('🔍 Request after setBody:', testRequest);
-                    console.log('🔍 Does request have body?', testRequest.hasBody ? testRequest.hasBody() : 'hasBody method not found');
-                    console.log('🔍 Get body returns:', testRequest.getBody ? testRequest.getBody() : 'getBody method not found');
-                } else {
-                    console.error('❌ GetAppInfoRequestBody constructor not available');
-                }
-            } else {
-                console.error('❌ GetAppInfoRequest constructor not available');
-            }
-            
-            // Use official Avid sample pattern: body-only + metadata authentication
-            console.log('🔬 Using official Avid sample pattern (body-only)...');
-            const testRequest = new proto.mcapi.GetAppInfoRequest();
-            
-            // Only set body (no header) - following official samples
-            if (proto.mcapi.GetAppInfoRequestBody) {
-                const testBody = new proto.mcapi.GetAppInfoRequestBody();
-                testRequest.setBody(testBody);
-                console.log('✅ Set request body (official pattern)');
-            }
-            
-            console.log('📨 Request with body-only size:', testRequest.serializeBinary().length, 'bytes');
-            
-            // Use metadata authentication like official samples
-            const metadata = { accessToken: this.accessToken };
-            console.log('🔑 Using metadata authentication (official pattern)');
-            
-            this.client.getAppInfo(testRequest, metadata, (err, response) => {
-                if (err) {
-                    console.error('❌ GetAppInfo failed:', err);
-                } else {
-                    console.log('✅ GetAppInfo succeeded:', response.toObject());
-                }
-            });
-            
-            // Now try GetOpenProjectInfo using official pattern
-            console.log('🧪 Testing GetOpenProjectInfo with official pattern...');
-            const request = new proto.mcapi.GetOpenProjectInfoRequest();
-            
-            // Only set body (following official samples)
-            if (proto.mcapi.GetOpenProjectInfoRequestBody) {
-                const requestBody = new proto.mcapi.GetOpenProjectInfoRequestBody();
-                request.setBody(requestBody);
-                console.log('✅ Set GetOpenProjectInfo body (official pattern)');
-            }
-            
-            // Try Echo API using official pattern
-            console.log('🧪 Testing Echo API with official pattern...');
-            if (this.client.echo && proto.mcapi.EchoRequest) {
-                const echoRequest = new proto.mcapi.EchoRequest();
-                
-                // Only set body (following official samples)
-                if (proto.mcapi.EchoRequestBody) {
-                    const echoBody = new proto.mcapi.EchoRequestBody();
-                    // Set message like official sample
-                    if (typeof echoBody.setMessage === 'function') {
-                        echoBody.setMessage('test message from panel');
-                        console.log('✅ Set echo message');
-                    }
-                    echoRequest.setBody(echoBody);
-                    console.log('✅ Set Echo body (official pattern)');
-                }
-                
-                console.log('📨 Echo request size:', echoRequest.serializeBinary().length, 'bytes');
-                
-                // Reuse metadata variable
-                this.client.echo(echoRequest, metadata, (err, response) => {
-                    if (err) {
-                        console.error('❌ Echo failed:', err);
-                    } else {
-                        console.log('✅ Echo succeeded:', response.toObject());
-                    }
+            // Add metadata (like access token) to headers
+            if (metadata) {
+                Object.keys(metadata).forEach(key => {
+                    headers[key.toLowerCase()] = metadata[key];
                 });
             }
             
-            console.log('📨 Final request:', request);
-            console.log('📦 Request serialized size:', request.serializeBinary().length, 'bytes');
+            console.log('🔑 Request headers:', headers);
+            console.log('📡 Fetching:', method);
             
-            // Use the correct method name
-            this.client.getOpenProjectInfo(request, metadata, (err, response) => {
-                if (err) {
-                    console.error('Error getting project info:', err);
-                    this.updateProjectInfo(null);
-                } else {
-                    this.updateProjectInfo(response.toObject());
+            // Make the HTTP request
+            fetch(method, {
+                method: 'POST',
+                headers: headers,
+                body: requestBytes,
+                mode: 'cors',
+                credentials: 'include'
+            })
+            .then(response => {
+                console.log('📡 Response status:', response.status, response.statusText);
+                console.log('📋 Response headers:');
+                for (let [key, value] of response.headers.entries()) {
+                    console.log(`   ${key}: ${value}`);
                 }
-            });
-        } catch (error) {
-            console.error('Failed to get project info:', error);
-        }
-    }
-    
-    async getAllBins() {
-        if (!this.isConnected) {
-            this.showStatus('Not connected to Media Composer', 'error');
-            return;
-        }
-        
-        try {
-            if (typeof proto === 'undefined' || !proto.mcapi) {
-                console.error('Proto objects not available');
-                return;
-            }
-            // Use the correct request class for getting bins (official pattern)
-            const request = new proto.mcapi.GetBinsRequest();
-            
-            // Only set body (following official samples)
-            if (proto.mcapi.GetBinsRequestBody) {
-                const body = new proto.mcapi.GetBinsRequestBody();
-                // Set recursive flag if available
-                if (typeof body.setRecursive === 'function') {
-                    body.setRecursive(true);
+                
+                // Check for gRPC errors in headers first
+                const grpcStatus = response.headers.get('grpc-status');
+                const grpcMessage = response.headers.get('grpc-message');
+                
+                if (grpcStatus && grpcStatus !== '0') {
+                    throw new Error(`gRPC Error ${grpcStatus}: ${grpcMessage || 'Unknown error'}`);
                 }
-                request.setBody(body);
-            }
-            
-            // Use metadata authentication like official samples
-            const binsMetadata = { accessToken: this.accessToken };
-            
-            // Use the correct method name
-            this.client.getBins(request, binsMetadata, (err, response) => {
-                if (err) {
-                    console.error('Error getting bins:', err);
-                    this.logEvent('Error', 'Failed to get bins');
-                } else {
-                    const bins = response.getBinsList();
-                    this.logEvent('Bins Retrieved', `Found ${bins.length} bins`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                // Check Content-Length to avoid downloading huge responses
+                const contentLength = response.headers.get('content-length');
+                if (contentLength) {
+                    const sizeInMB = parseInt(contentLength) / (1024 * 1024);
+                    console.log('📏 Content-Length:', sizeInMB.toFixed(2), 'MB');
                     
-                    // Display bin names
-                    const binNames = bins.map(bin => bin.getDisplayname()).join(', ');
-                    this.updateBinContents(`Bins: ${binNames}`);
+                    // Reject suspiciously large responses
+                    if (sizeInMB > 10) {
+                        console.error('❌ Response too large:', sizeInMB.toFixed(2), 'MB');
+                        // Try to read just the first chunk to debug
+                        return response.arrayBuffer().then(buffer => {
+                            const preview = new Uint8Array(buffer, 0, Math.min(1000, buffer.byteLength));
+                            console.log('🔍 Response preview (first 1000 bytes):', preview);
+                            console.log('🔍 As string:', new TextDecoder().decode(preview));
+                            throw new Error(`Response too large: ${sizeInMB.toFixed(2)} MB. This appears to be incorrect data.`);
+                        });
+                    }
                 }
+                
+                return response.arrayBuffer();
+            })
+            .then(responseBytes => {
+                console.log('📦 Response size:', responseBytes.byteLength, 'bytes');
+                
+                // Handle empty response
+                if (responseBytes.byteLength === 0) {
+                    console.log('📭 Empty response - creating default response');
+                    const emptyResponse = new methodDescriptor.responseType();
+                    callback(null, emptyResponse);
+                    return;
+                }
+                
+                // Debug: Check what the response actually looks like
+                const uint8View = new Uint8Array(responseBytes);
+                const first100Bytes = uint8View.slice(0, Math.min(100, uint8View.length));
+                console.log('🔍 First 100 bytes (raw):', Array.from(first100Bytes));
+                
+                // Try to detect if it's text/JSON instead of binary
+                const textDecoder = new TextDecoder('utf-8', { fatal: false });
+                const asText = textDecoder.decode(first100Bytes);
+                if (asText.startsWith('{') || asText.startsWith('[')) {
+                    console.log('📝 Response appears to be JSON:', asText);
+                    // This shouldn't happen with gRPC, but log it for debugging
+                    callback(new Error('Received JSON response instead of protobuf'), null);
+                    return;
+                }
+                
+                try {
+                    let messageBytes;
+                    
+                    // Try different parsing strategies
+                    if (responseBytes.byteLength >= 5) {
+                        // Strategy 1: Standard gRPC-Web format (5-byte header)
+                        const dataView = new DataView(responseBytes);
+                        const compressionFlag = dataView.getUint8(0);
+                        const messageLength = dataView.getUint32(1, false); // big-endian
+                        
+                        console.log('🔍 Trying standard gRPC-Web format:');
+                        console.log('   Compression flag:', compressionFlag);
+                        console.log('   Message length:', messageLength);
+                        
+                        // Sanity check the message length
+                        if (messageLength > 0 && messageLength <= responseBytes.byteLength - 5 && messageLength < 1024 * 1024) {
+                            // Looks reasonable, try to parse
+                            messageBytes = new Uint8Array(responseBytes, 5, messageLength);
+                            console.log('✅ Using standard gRPC-Web format');
+                        } else {
+                            // Strategy 2: Try without header (raw protobuf)
+                            console.log('🔍 Length header seems wrong, trying raw protobuf');
+                            messageBytes = new Uint8Array(responseBytes);
+                        }
+                    } else {
+                        // Too small for gRPC-Web header, assume raw protobuf
+                        console.log('🔍 Response too small for header, using raw protobuf');
+                        messageBytes = new Uint8Array(responseBytes);
+                    }
+                    
+                    // Try to deserialize
+                    console.log('📦 Attempting to deserialize', messageBytes.length, 'bytes');
+                    const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                    console.log('✅ Response deserialized successfully');
+                    
+                    // Log the actual response data
+                    if (responseMessage && responseMessage.toObject) {
+                        console.log('📊 Response data:', responseMessage.toObject());
+                    }
+                    
+                    callback(null, responseMessage);
+                    
+                } catch (deserError) {
+                    console.error('❌ Deserialization failed:', deserError);
+                    
+                    // Final fallback: Try different byte offsets in case header is different
+                    console.log('🔍 Trying alternative parsing strategies...');
+                    
+                    const offsets = [0, 1, 4, 5, 8]; // Common header sizes
+                    for (const offset of offsets) {
+                        if (offset >= responseBytes.byteLength) continue;
+                        
+                        try {
+                            const testBytes = new Uint8Array(responseBytes, offset);
+                            const testResponse = methodDescriptor.responseType.deserializeBinary(testBytes);
+                            console.log(`✅ Successfully parsed with offset ${offset}`);
+                            if (testResponse && testResponse.toObject) {
+                                console.log('📊 Response data:', testResponse.toObject());
+                            }
+                            callback(null, testResponse);
+                            return;
+                        } catch (e) {
+                            // Continue trying other offsets
+                        }
+                    }
+                    
+                    // All strategies failed
+                    console.error('❌ All parsing strategies failed');
+                    callback(new Error('Failed to parse response with any strategy'), null);
+                }
+            })
+            .catch(error => {
+                console.error('❌ Network/HTTP error:', error);
+                callback(error, null);
             });
+            
         } catch (error) {
-            console.error('Failed to get bins:', error);
+            console.error('❌ Request preparation failed:', error);
+            setTimeout(() => callback(error, null), 10);
         }
-    }
+    };
+
+    console.log('✅ Enhanced gRPC bridge installed');
+    return true;
+}
+
+// Initialize the application
+function init() {
+    console.log('🚀 Initializing Avid Panel Plugin...');
     
-    onBinSelectionChanged(binPath) {
-        this.updateBinContents(`Selected: ${binPath}`);
-    }
+    // Update UI elements
+    updateConnectionStatus('Initializing...', 'warning');
     
-    // UI Updates
-    updateConnectionInfo() {
-        const info = `
-            <div class="info-item">
-                <strong>Status:</strong> Connected
-            </div>
-            <div class="info-item">
-                <strong>Access Token:</strong> ${this.accessToken ? this.accessToken.substring(0, 8) + '...' : 'N/A'}
-            </div>
-            <div class="info-item">
-                <strong>Server:</strong> ${this.serverAddress || 'N/A'}
-            </div>
-        `;
-        document.getElementById('connection-info').innerHTML = info;
-    }
-    
-    updateProjectInfo(projectData) {
-        if (projectData) {
-            const info = `
-                <div class="info-item">
-                    <strong>Name:</strong> ${projectData.name || 'Unknown'}
-                </div>
-                <div class="info-item">
-                    <strong>Type:</strong> ${projectData.type || 'Unknown'}
-                </div>
-                <div class="info-item">
-                    <strong>Path:</strong> ${projectData.path || 'Unknown'}
-                </div>
-            `;
-            document.getElementById('project-info').innerHTML = info;
-        } else {
-            document.getElementById('project-info').innerHTML = '<p>No project loaded</p>';
-        }
-    }
-    
-    updateBinContents(content) {
-        document.getElementById('bin-contents').innerHTML = `<p>${content}</p>`;
-    }
-    
-    showStatus(message, type) {
-        const statusEl = document.getElementById('connection-status');
-        statusEl.textContent = message;
-        statusEl.className = `status-badge ${type}`;
-    }
-    
-    logEvent(eventName, data) {
-        const logEl = document.getElementById('event-log');
-        const timestamp = new Date().toLocaleTimeString();
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        entry.innerHTML = `
-            <span class="timestamp">${timestamp}</span>
-            <strong>${eventName}</strong>
-            ${data ? `: ${JSON.stringify(data).substring(0, 100)}` : ''}
-        `;
-        logEl.insertBefore(entry, logEl.firstChild);
+    // Check if we're running in Media Composer or standalone
+    if (typeof mcapi !== 'undefined') {
+        console.log('✅ Running in Media Composer environment');
         
-        // Keep only last 20 entries
-        while (logEl.children.length > 20) {
-            logEl.removeChild(logEl.lastChild);
+        // Install the enhanced gRPC bridge
+        if (installGrpcBridge()) {
+            connectToMediaComposer();
+        } else {
+            console.error('❌ Failed to install gRPC bridge');
+            updateConnectionStatus('Bridge Error', 'error');
         }
+    } else {
+        console.log('⚠️ Running in standalone mode (no Media Composer connection)');
+        updateConnectionStatus('Standalone Mode', 'warning');
+        document.getElementById('connection-info').innerHTML = `
+            <p>⚠️ Running outside Media Composer</p>
+            <p>To use this plugin, open it from within Media Composer's Panels menu.</p>
+        `;
+    }
+    
+    // Set up button event handlers
+    setupEventHandlers();
+}
+
+// Connect to Media Composer via gRPC
+function connectToMediaComposer() {
+    console.log('🔌 Connecting to Media Composer...');
+    
+    try {
+        // Get the gateway server address from Media Composer
+        const gatewayUrl = window.mcapi.getGatewayServerAddress();
+        console.log('🌐 Gateway URL from Media Composer:', gatewayUrl);
+        
+        if (!gatewayUrl) {
+            throw new Error('No gateway URL provided by Media Composer');
+        }
+        
+        // Get access token if available
+        accessToken = window.mcapi.getAccessToken();
+        console.log('🔑 Access token available:', !!accessToken);
+        
+        // Create the gRPC client
+        const serviceUrl = `${gatewayUrl}/mcapi.MCAPI`;
+        console.log('🎯 Full service URL:', serviceUrl);
+        
+        // Check if proto.mcapi is available
+        if (!window.proto || !window.proto.mcapi || !window.proto.mcapi.MCAPIClient) {
+            throw new Error('gRPC proto files not loaded correctly');
+        }
+        
+        grpcClient = new proto.mcapi.MCAPIClient(serviceUrl, null, {
+            withCredentials: true
+        });
+        
+        isConnected = true;
+        updateConnectionStatus('Connected', 'success');
+        
+        // Update connection info
+        document.getElementById('connection-info').innerHTML = `
+            <p><strong>Status:</strong> Connected ✅</p>
+            <p><strong>Gateway:</strong> ${gatewayUrl}</p>
+            <p><strong>Token:</strong> ${accessToken ? 'Available' : 'Not available'}</p>
+        `;
+        
+        // Try to get initial app info
+        getAppInfo();
+        
+    } catch (error) {
+        console.error('❌ Connection failed:', error);
+        updateConnectionStatus('Connection Failed', 'error');
+        document.getElementById('connection-info').innerHTML = `
+            <p>❌ Failed to connect: ${error.message}</p>
+        `;
     }
 }
 
-// Initialize app when page loads
-window.addEventListener('load', () => {
-    window.avidPanel = new AvidPanelApp();
-});
+// Update connection status badge
+function updateConnectionStatus(text, type) {
+    const badge = document.getElementById('connection-status');
+    badge.textContent = text;
+    badge.className = `status-badge ${type}`;
+}
+
+// Get application info
+function getAppInfo() {
+    if (!grpcClient) {
+        console.error('❌ No gRPC client available');
+        addToEventLog('Error: No gRPC client available', 'error');
+        return;
+    }
+    
+    console.log('📡 Getting app info...');
+    addToEventLog('Requesting app info...', 'info');
+    
+    try {
+        // Create request with body
+        const requestBody = new proto.mcapi.GetAppInfoRequestBody();
+        const request = new proto.mcapi.GetAppInfoRequest();
+        request.setBody(requestBody);
+        
+        // Prepare metadata
+        const metadata = {};
+        if (accessToken) {
+            metadata['authorization'] = `Bearer ${accessToken}`;
+        }
+        
+        console.log('📤 Sending GetAppInfo request...');
+        
+        // Make the gRPC call
+        grpcClient.getAppInfo(request, metadata, (error, response) => {
+            if (error) {
+                console.error('❌ GetAppInfo error:', error);
+                addToEventLog(`Error: ${error.message}`, 'error');
+                document.getElementById('project-info').innerHTML = `
+                    <p>❌ Error getting app info: ${error.message}</p>
+                `;
+            } else {
+                console.log('✅ GetAppInfo response:', response);
+                
+                if (response && response.toObject) {
+                    const data = response.toObject();
+                    console.log('📊 App info data:', data);
+                    addToEventLog('App info received successfully', 'success');
+                    
+                    // Update project info display
+                    if (data.body) {
+                        document.getElementById('project-info').innerHTML = `
+                            <p><strong>Application:</strong> ${data.body.application || 'Unknown'}</p>
+                            <p><strong>Version:</strong> ${data.body.version || 'Unknown'}</p>
+                            <p><strong>API Version:</strong> ${data.body.apiVersion || 'Unknown'}</p>
+                        `;
+                    } else {
+                        document.getElementById('project-info').innerHTML = `
+                            <p>⚠️ Received response but no data</p>
+                        `;
+                    }
+                } else {
+                    document.getElementById('project-info').innerHTML = `
+                        <p>⚠️ Invalid response format</p>
+                    `;
+                }
+            }
+        });
+    } catch (error) {
+        console.error('❌ Failed to create request:', error);
+        addToEventLog(`Failed to create request: ${error.message}`, 'error');
+    }
+}
+
+// Get all bins (streaming response)
+function getAllBins() {
+    if (!grpcClient) {
+        console.error('❌ No gRPC client available');
+        addToEventLog('Error: No gRPC client available', 'error');
+        return;
+    }
+    
+    console.log('📡 Getting all bins...');
+    addToEventLog('Requesting bin list...', 'info');
+    
+    try {
+        // Create request
+        const requestBody = new proto.mcapi.GetBinsRequestBody();
+        const request = new proto.mcapi.GetBinsRequest();
+        request.setBody(requestBody);
+        
+        // Prepare metadata
+        const metadata = {};
+        if (accessToken) {
+            metadata['authorization'] = `Bearer ${accessToken}`;
+        }
+        
+        console.log('📤 Sending GetBins request (streaming)...');
+        
+        // Make the streaming gRPC call
+        const stream = grpcClient.getBins(request, metadata);
+        
+        let binCount = 0;
+        const bins = [];
+        
+        stream.on('data', (response) => {
+            console.log('📦 Received bin data:', response);
+            if (response && response.toObject) {
+                const data = response.toObject();
+                bins.push(data);
+                binCount++;
+                addToEventLog(`Received bin ${binCount}: ${data.body?.name || 'Unknown'}`, 'success');
+            }
+        });
+        
+        stream.on('error', (error) => {
+            console.error('❌ Stream error:', error);
+            addToEventLog(`Stream error: ${error.message}`, 'error');
+        });
+        
+        stream.on('end', () => {
+            console.log('✅ Stream ended. Total bins:', binCount);
+            addToEventLog(`Received ${binCount} bins total`, 'success');
+            
+            // Update bin display
+            if (bins.length > 0) {
+                const binList = bins.map(bin => 
+                    `<li>${bin.body?.name || 'Unknown'} (${bin.body?.id || 'No ID'})</li>`
+                ).join('');
+                document.getElementById('bin-contents').innerHTML = `
+                    <p><strong>Total bins:</strong> ${binCount}</p>
+                    <ul>${binList}</ul>
+                `;
+            } else {
+                document.getElementById('bin-contents').innerHTML = `
+                    <p>No bins found</p>
+                `;
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Failed to get bins:', error);
+        addToEventLog(`Failed to get bins: ${error.message}`, 'error');
+    }
+}
+
+// Add message to event log
+function addToEventLog(message, type = 'info') {
+    const log = document.getElementById('event-log');
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    
+    const timestamp = new Date().toLocaleTimeString();
+    entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+    
+    log.insertBefore(entry, log.firstChild);
+    
+    // Keep only last 50 entries
+    while (log.children.length > 50) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+// Clear event log
+function clearEventLog() {
+    document.getElementById('event-log').innerHTML = '';
+    addToEventLog('Event log cleared', 'info');
+}
+
+// Set up button event handlers
+function setupEventHandlers() {
+    // Refresh button
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+        console.log('🔄 Refresh button clicked');
+        addToEventLog('Refreshing project info...', 'info');
+        getAppInfo();
+    });
+    
+    // Get bins button
+    document.getElementById('get-bins-btn').addEventListener('click', () => {
+        console.log('📂 Get bins button clicked');
+        addToEventLog('Getting all bins...', 'info');
+        getAllBins();
+    });
+    
+    // Clear log button
+    document.getElementById('clear-log-btn').addEventListener('click', () => {
+        console.log('🧹 Clear log button clicked');
+        clearEventLog();
+    });
+}
+
+// Wait for DOM and gRPC to be ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    // DOM already loaded
+    setTimeout(init, 100); // Small delay to ensure gRPC files are loaded
+}

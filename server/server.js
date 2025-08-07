@@ -15,9 +15,23 @@ app.use(cors({
     credentials: true
 }));
 
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/grpc-web', express.static(path.join(__dirname, 'public', 'grpc-web')));
+// Serve static files with correct MIME types (CRITICAL for gRPC-web)
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        }
+    }
+}));
+
+// Explicit gRPC route to ensure availability
+app.use('/grpc-web', express.static(path.join(__dirname, 'public', 'grpc-web'), {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.js')) {
+            res.setHeader('Content-Type', 'application/javascript');
+        }
+    }
+}));
 
 // Health check endpoint
 app.get('/health', (req, res) => {

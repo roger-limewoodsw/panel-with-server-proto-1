@@ -196,145 +196,185 @@
                 this.unaryCall = this.rpcCall;
             };
         } else {
-            // Media Composer mode - use the real grpc.web that should already be available
-            console.log('🎬 Media Composer detected - using real gRPC.web implementation');
+            // Media Composer mode - let the real gRPC client handle protocol details
+            console.log('🎬 Media Composer detected - using native gRPC client');
             console.log('🔍 Available grpc.web:', window.grpc.web);
             console.log('📦 grpc.web keys:', window.grpc.web ? Object.keys(window.grpc.web) : 'none');
             
-            // Add missing GrpcWebClientBase to Media Composer's grpc.web
+            // Debug the mcapi object to understand Media Composer's gRPC interface
+            console.log('🔍 Exploring mcapi object structure...');
+            if (typeof mcapi !== 'undefined') {
+                console.log('📋 mcapi keys:', Object.getOwnPropertyNames(mcapi));
+                console.log('📋 mcapi methods:', Object.getOwnPropertyNames(mcapi).filter(key => typeof mcapi[key] === 'function'));
+                
+                // Check for any gRPC-related methods
+                const grpcMethods = Object.getOwnPropertyNames(mcapi).filter(key => 
+                    key.toLowerCase().includes('grpc') || 
+                    key.toLowerCase().includes('call') || 
+                    key.toLowerCase().includes('service') ||
+                    key.toLowerCase().includes('request')
+                );
+                console.log('🎯 Potential gRPC methods:', grpcMethods);
+            }
+            
+            // The generated MCAPIClient needs GrpcWebClientBase but Media Composer doesn't provide it
+            // We need to provide a bridge that uses Media Composer's native gRPC capabilities
             if (!window.grpc.web.GrpcWebClientBase) {
-                console.log('➕ Adding missing GrpcWebClientBase to Media Composer grpc.web');
-                window.grpc.web.GrpcWebClientBase = function(opt_options, opt_client) {
-                    this.hostname_ = '';
-                    this.credentials_ = null;
-                    this.options_ = opt_options || {};
+                console.log('🔧 Providing GrpcWebClientBase bridge for Media Composer integration');
+                
+                window.grpc.web.GrpcWebClientBase = function(hostname, credentials, options) {
+                    console.log('🏗️ GrpcWebClientBase created for:', hostname);
+                    this.hostname_ = hostname;
+                    this.credentials_ = credentials;
+                    this.options_ = options || {};
+                };
+                
+                // Add the rpcCall method that the generated client expects
+                window.grpc.web.GrpcWebClientBase.prototype.rpcCall = function(method, request, metadata, methodDescriptor, callback) {
+                    console.log('🎬 Making gRPC-web HTTP request:', method);
+                    console.log('📦 Request size:', request.serializeBinary().length, 'bytes');
+                    console.log('🔑 Metadata:', metadata);
                     
-                    // Real implementation for Media Composer API calls
-                    this.rpcCall = function(method, request, metadata, methodDescriptor, callback) {
-                        console.log('🎬 Making real Media Composer gRPC call:', method);
+                    // Media Composer provides gateway address, so we make HTTP requests directly
+                    try {
+                        const requestBytes = request.serializeBinary();
                         
-                        try {
-                            // Try a completely different approach - maybe send minimal gRPC request
-                            console.log('🧪 Trying minimal gRPC request approach...');
-                            
-                            // For some APIs, we might need to send a minimal but valid protobuf message
-                            // Let's try creating a minimal request manually
-                            const requestBytes = request.serializeBinary();
-                            console.log('📦 Original request serialized, size:', requestBytes.length, 'bytes');
-                            
-                            // Now we expect requests to have proper size since we're setting header+body
-                            let finalRequestBytes = requestBytes;
-                            if (requestBytes.length === 0) {
-                                console.error('❌ Request is still 0 bytes! Header+body structure may be incomplete');
-                                console.log('🔧 Falling back to empty buffer...');
-                                finalRequestBytes = new Uint8Array(0);
-                            } else {
-                                console.log('✅ Request has proper size with header+body structure');
-                            }
-                            
-                            console.log('🔍 Request object:', request);
-                            console.log('🔍 Method descriptor:', methodDescriptor);
-                            
-                            // Prepare headers for gRPC-Web  
-                            const headers = {
-                                'Content-Type': 'application/grpc-web+proto',
-                                'X-Grpc-Web': '1'
-                            };
-                            
-                            // Add metadata (like access token) to headers - official pattern
-                            if (metadata) {
-                                Object.keys(metadata).forEach(key => {
-                                    headers[key.toLowerCase()] = metadata[key];
-                                });
-                            }
-                            
-                            console.log('🔑 Headers:', headers);
-                            
-                            // Make the HTTP request to Media Composer's gRPC gateway
-                            fetch(method, {
-                                method: 'POST',
-                                headers: headers,
-                                body: finalRequestBytes,
-                                mode: 'cors',
-                                credentials: 'include'
-                            })
-                            .then(response => {
-                                console.log('📡 Response received:', response.status, response.statusText);
-                                console.log('📋 Response headers:');
-                                for (let [key, value] of response.headers.entries()) {
-                                    console.log(`   ${key}: ${value}`);
-                                }
-                                console.log('📄 Response URL:', response.url);
-                                console.log('📄 Response type:', response.type);
-                                
-                                if (!response.ok) {
-                                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                                }
-                                
-                                return response.arrayBuffer();
-                            })
-                            .then(responseBytes => {
-                                console.log('📦 Response received, size:', responseBytes.byteLength, 'bytes');
-                                
-                                // Handle empty response
-                                if (responseBytes.byteLength === 0) {
-                                    console.log('📭 Empty response - creating default response object');
-                                    try {
-                                        // Create an empty instance of the expected response type
-                                        const emptyResponse = new methodDescriptor.responseType();
-                                        console.log('✅ Empty response object created successfully');
-                                        callback(null, emptyResponse);
-                                        return;
-                                    } catch (emptyError) {
-                                        console.error('❌ Failed to create empty response:', emptyError);
-                                        callback(new Error('Received empty response from Media Composer'), null);
-                                        return;
-                                    }
-                                }
-                                
-                                try {
-                                    // Check if we have enough bytes for gRPC-Web header
-                                    if (responseBytes.byteLength < 5) {
-                                        console.log('⚠️ Response too small for gRPC-Web header, treating as raw message');
-                                        // Try to deserialize directly
-                                        const messageBytes = new Uint8Array(responseBytes);
-                                        const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
-                                        console.log('✅ Raw response deserialized successfully');
-                                        callback(null, responseMessage);
-                                        return;
-                                    }
-                                    
-                                    // gRPC-Web responses have a 5-byte header we need to skip
-                                    const dataView = new DataView(responseBytes);
-                                    const messageLength = dataView.getUint32(1, false); // big-endian
-                                    const messageBytes = new Uint8Array(responseBytes, 5, messageLength);
-                                    
-                                    console.log('📦 Message extracted, size:', messageBytes.length, 'bytes');
-                                    
-                                    // Deserialize using the response type from the method descriptor
-                                    const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
-                                    console.log('✅ Response deserialized successfully');
-                                    
-                                    callback(null, responseMessage);
-                                } catch (deserError) {
-                                    console.error('❌ Failed to deserialize response:', deserError);
-                                    console.log('🔍 Raw response bytes:', new Uint8Array(responseBytes));
-                                    callback(deserError, null);
-                                }
-                            })
-                            .catch(networkError => {
-                                console.error('❌ Network/HTTP error:', networkError);
-                                callback(networkError, null);
+                        // Prepare headers for gRPC-Web
+                        const headers = {
+                            'Content-Type': 'application/grpc-web+proto',
+                            'X-Grpc-Web': '1'
+                        };
+                        
+                        // Add metadata (like access token) to headers
+                        if (metadata) {
+                            Object.keys(metadata).forEach(key => {
+                                headers[key.toLowerCase()] = metadata[key];
                             });
+                        }
+                        
+                        console.log('🔑 Request headers:', headers);
+                        console.log('🌐 Making fetch to:', method);
+                        
+                        // Make the HTTP request to Media Composer's gRPC gateway
+                        fetch(method, {
+                            method: 'POST',
+                            headers: headers,
+                            body: requestBytes,
+                            mode: 'cors',
+                            credentials: 'include'
+                        })
+                        .then(response => {
+                            console.log('📡 Response received:', response.status, response.statusText);
+                            console.log('📋 Response headers:');
+                            for (let [key, value] of response.headers.entries()) {
+                                console.log(`   ${key}: ${value}`);
+                            }
                             
-                        } catch (error) {
-                            console.error('❌ Request preparation failed:', error);
-                            setTimeout(() => callback(error, null), 10);
+                            if (!response.ok) {
+                                // Check for gRPC errors in headers
+                                const grpcStatus = response.headers.get('grpc-status');
+                                const grpcMessage = response.headers.get('grpc-message');
+                                if (grpcStatus && grpcStatus !== '0') {
+                                    throw new Error(`gRPC Error ${grpcStatus}: ${grpcMessage || 'Unknown error'}`);
+                                }
+                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            }
+                            
+                            return response.arrayBuffer();
+                        })
+                        .then(responseBytes => {
+                            console.log('📦 Response received, size:', responseBytes.byteLength, 'bytes');
+                            
+                            // Handle empty response
+                            if (responseBytes.byteLength === 0) {
+                                console.log('📭 Empty response - creating default response object');
+                                try {
+                                    const emptyResponse = new methodDescriptor.responseType();
+                                    console.log('✅ Empty response object created successfully');
+                                    callback(null, emptyResponse);
+                                    return;
+                                } catch (emptyError) {
+                                    console.error('❌ Failed to create empty response:', emptyError);
+                                    callback(new Error('Received empty response from Media Composer'), null);
+                                    return;
+                                }
+                            }
+                            
+                            try {
+                                // For very small responses, try raw deserialization first
+                                if (responseBytes.byteLength < 5) {
+                                    console.log('⚠️ Response too small for gRPC-Web header, treating as raw message');
+                                    const messageBytes = new Uint8Array(responseBytes);
+                                    const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                                    console.log('✅ Raw response deserialized successfully');
+                                    callback(null, responseMessage);
+                                    return;
+                                }
+                                
+                                // gRPC-Web responses have a 5-byte header: 1 byte compression + 4 bytes length
+                                const dataView = new DataView(responseBytes);
+                                const compressionFlag = dataView.getUint8(0);
+                                const messageLength = dataView.getUint32(1, false); // big-endian
+                                
+                                console.log('🔍 gRPC-Web header - compression:', compressionFlag, 'length:', messageLength);
+                                
+                                if (messageLength > responseBytes.byteLength - 5) {
+                                    console.warn('⚠️ Message length mismatch, trying raw deserialization');
+                                    const messageBytes = new Uint8Array(responseBytes);
+                                    const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                                    console.log('✅ Raw response deserialized successfully');
+                                    callback(null, responseMessage);
+                                    return;
+                                }
+                                
+                                const messageBytes = new Uint8Array(responseBytes, 5, messageLength);
+                                console.log('📦 Message extracted, size:', messageBytes.length, 'bytes');
+                                
+                                // Deserialize using the response type from the method descriptor
+                                const responseMessage = methodDescriptor.responseType.deserializeBinary(messageBytes);
+                                console.log('✅ Response deserialized successfully');
+                                
+                                callback(null, responseMessage);
+                            } catch (deserError) {
+                                console.error('❌ Failed to deserialize response:', deserError);
+                                console.log('🔍 Raw response bytes:', new Uint8Array(responseBytes));
+                                callback(deserError, null);
+                            }
+                        })
+                        .catch(networkError => {
+                            console.error('❌ Network/HTTP error:', networkError);
+                            callback(networkError, null);
+                        });
+                        
+                    } catch (error) {
+                        console.error('❌ Request preparation failed:', error);
+                        setTimeout(() => callback(error, null), 10);
+                    }
+                };
+                
+                // Add serverStreaming method for getBins
+                window.grpc.web.GrpcWebClientBase.prototype.serverStreaming = function(method, request, metadata, methodDescriptor) {
+                    console.log('🌊 Native streaming gRPC call via Media Composer:', method);
+                    
+                    // Create a mock stream object
+                    const stream = {
+                        on: function(event, callback) {
+                            console.log('📡 Stream event listener added:', event);
+                            if (event === 'error') {
+                                // For now, emit an error since we need to figure out streaming
+                                setTimeout(() => {
+                                    callback(new Error('Streaming not yet implemented for Media Composer native transport'));
+                                }, 100);
+                            }
                         }
                     };
                     
-                    this.unaryCall = this.rpcCall;
+                    return stream;
                 };
+                
+                console.log('✅ GrpcWebClientBase bridge installed');
+            } else {
+                console.log('✅ GrpcWebClientBase already available');
             }
         }
         
@@ -343,15 +383,37 @@
         window.proto.mcapi = window.proto.mcapi || {};
     </script>
     
-    <!-- Load gRPC-web dependencies -->
+    <!-- Load gRPC-web dependencies in STRICT ORDER -->
     <script src="/grpc-web/MCAPI_Types_pb.js"></script>
     <script src="/grpc-web/MCAPI_pb.js"></script>
     <script src="/grpc-web/MCAPI_grpc_web_pb.js"></script>
     
-    <!-- Simple debug to confirm proto objects are loaded -->
+    <!-- Enhanced gRPC loading debug -->
     <script>
-        console.log('✅ Proto objects loaded successfully');
-        console.log('📦 Available clients:', window.proto.mcapi.MCAPIClient ? 'MCAPIClient' : 'none', window.proto.mcapi.MCAPIPromiseClient ? 'MCAPIPromiseClient' : 'none');
+        console.log('=== gRPC Loading Debug ===');
+        
+        // Debug gRPC loading immediately
+        console.log('typeof proto:', typeof proto);
+        console.log('typeof mcapi:', typeof mcapi);
+        
+        if (typeof proto !== 'undefined') {
+            console.log('proto keys:', Object.keys(proto));
+            console.log('proto.mcapi available:', !!proto.mcapi);
+            
+            if (proto.mcapi) {
+                console.log('proto.mcapi keys:', Object.keys(proto.mcapi));
+                console.log('📦 Available clients:', 
+                    proto.mcapi.MCAPIClient ? 'MCAPIClient' : 'none', 
+                    proto.mcapi.MCAPIPromiseClient ? 'MCAPIPromiseClient' : 'none'
+                );
+                
+                // Test constructor availability
+                console.log('GetAppInfoRequest available:', typeof proto.mcapi.GetAppInfoRequest);
+                console.log('GetAppInfoRequestBody available:', typeof proto.mcapi.GetAppInfoRequestBody);
+            }
+        }
+        
+        console.log('✅ gRPC loading debug complete');
     </script>
 </head>
 <body>
