@@ -15,7 +15,7 @@ app.use(cors({
     credentials: true
 }));
 
-// Serve static files with correct MIME types (CRITICAL for gRPC-web)
+// Serve static files with correct MIME types
 app.use(express.static(path.join(__dirname, 'public'), {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.js')) {
@@ -24,14 +24,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
 }));
 
-// Explicit gRPC route to ensure availability
-app.use('/grpc-web', express.static(path.join(__dirname, 'public', 'grpc-web'), {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.js')) {
-            res.setHeader('Content-Type', 'application/javascript');
-        }
-    }
-}));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -49,7 +41,6 @@ app.listen(PORT, () => {
     console.log(`📡 Local: http://localhost:${PORT}`);
     console.log(`📂 Serving from: ${path.join(__dirname, 'public')}`);
     console.log(`\n⚠️  Remember to:`);
-    console.log(`   1. Copy gRPC-web files from Panel SDK to public/grpc-web/`);
-    console.log(`   2. Install the plugin (.avpi) file in Media Composer`);
-    console.log(`   3. Ensure Feature Toggle Files are installed\n`);
+    console.log(`   1. Install the plugin (.avpi) file in Media Composer`);
+    console.log(`   2. Ensure Feature Toggle Files are installed\n`);
 });

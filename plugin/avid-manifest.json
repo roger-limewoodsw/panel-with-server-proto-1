@@ -41,7 +41,8 @@
     ],
     "allowedDomains": [
         "localhost:3000",
-        "cdn.jsdelivr.net"
+        "cdn.jsdelivr.net",
+        "unpkg.com"
     ],
     "windowStyle": "floating",
     "singleton": true
