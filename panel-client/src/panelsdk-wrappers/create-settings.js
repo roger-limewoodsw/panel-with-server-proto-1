@@ -1,4 +1,4 @@
-import { LoadSettingRequest, LoadSettingRequestBody } from '../grpc-web/MCAPI_Types_pb.js';
+import { LoadSettingRequest, LoadSettingRequestBody } from '../panelsdk-bridge.js';
 
 import { displayTextInfo, displayTextDebug, displayTextError } from '././logging.js';
 import { Mutex } from 'async-mutex';

@@ -1,5 +1,4 @@
-import { ExportFileRequest, ExportFileRequestBody } from '../grpc-web/MCAPI_Types_pb.js';
-import { CommandErrorType } from '../grpc-web/MCAPI_Types_pb.js';
+import { ExportFileRequest, ExportFileRequestBody, CommandErrorType } from '../panelsdk-bridge.js';
 import { registerTaskPath } from './utils.js';
 import { displayTextDebug, displayTextError, 
     displayTextFine, displayTextInfo, displayTextWarn } from './logging.js';

@@ -4,7 +4,7 @@ import {
     OpenBinRequest, OpenBinRequestBody,
     CloseBinRequest, CloseBinRequestBody,
     CreateBinRequest, CreateBinRequestBody
-} from '../grpc-web/MCAPI_Types_pb.js';
+} from '../panelsdk-bridge.js';
 
 import { displayTextDebug, displayTextError, 
     displayTextFine, displayTextInfo, displayTextWarn } from './logging.js';
@@ -29,8 +29,10 @@ export async function openBin(binName) {
     }
 
     displayTextDebug("Opening bin: " + binName);
-    const request = new OpenBinRequest();
-    const body = new OpenBinRequestBody();
+    const OpenBinRequestClass = OpenBinRequest();
+    const OpenBinRequestBodyClass = OpenBinRequestBody();
+    const request = new OpenBinRequestClass();
+    const body = new OpenBinRequestBodyClass();
 
     body.setBinPath("./" + binName);
     request.setBody(body);
@@ -77,8 +79,10 @@ export async function closeBin(binName) {
     }
 
     displayTextDebug("Closing bin: " + binName);
-    const request = new CloseBinRequest();
-    const body = new CloseBinRequestBody();
+    const CloseBinRequestClass = CloseBinRequest();
+    const CloseBinRequestBodyClass = CloseBinRequestBody();
+    const request = new CloseBinRequestClass();
+    const body = new CloseBinRequestBodyClass();
     
     body.setBinPath("./" + binName);
     request.setBody(body);
@@ -116,9 +120,11 @@ export async function createBin(binName) {
     }
 
     displayTextDebug("Creating bin: " + binName);
-    const openBinOption = CreateBinRequestBody.OpenBinOption.LASTACTIVEBINCONTAINER;
-    const request = new CreateBinRequest();
-    const body = new CreateBinRequestBody();
+    const CreateBinRequestClass = CreateBinRequest();
+    const CreateBinRequestBodyClass = CreateBinRequestBody();
+    const openBinOption = CreateBinRequestBodyClass.OpenBinOption.LASTACTIVEBINCONTAINER;
+    const request = new CreateBinRequestClass();
+    const body = new CreateBinRequestBodyClass();
     
     body.setBinName(binName);
     body.setFolderPath("");
@@ -166,5 +172,53 @@ export function openOrCreateBin(binName) {
       displayTextError(`Error in openOrCreateBin: ${err}`);
       reject(err);
     }
+  });
+}
+
+/**
+ * Get all bins from Media Composer (streaming response)
+ * @returns {Promise<Array>} - Resolves with array of bin objects
+ */
+export async function getAllBins() {
+  return new Promise((resolve, reject) => {
+    const mcapiclient = getApiClient();
+    const md = getMetadata();
+    
+    if (!mcapiclient || !md) {
+      displayTextError("API client or metadata is not initialized.");
+      reject(new Error("API client or metadata is not initialized"));
+      return;
+    }
+
+    displayTextDebug("Getting all bins...");
+    const GetBinsRequestClass = GetBinsRequest();
+    const GetBinsRequestBodyClass = GetBinsRequestBody();
+    const request = new GetBinsRequestClass();
+    const requestBody = new GetBinsRequestBodyClass();
+    request.setBody(requestBody);
+
+    const bins = [];
+    
+    // Make the streaming gRPC call
+    const stream = mcapiclient.getBins(request, md);
+    
+    stream.on('data', (response) => {
+      displayTextDebug('Received bin data:', response);
+      if (response && response.toObject) {
+        const data = response.toObject();
+        bins.push(data);
+        displayTextDebug(`Received bin: ${data.body?.name || 'Unknown'}`);
+      }
+    });
+    
+    stream.on('error', (error) => {
+      displayTextError(`Stream error: ${error.message}`);
+      reject(error);
+    });
+    
+    stream.on('end', () => {
+      displayTextInfo(`Retrieved ${bins.length} bins total`);
+      resolve(bins);
+    });
   });
 }

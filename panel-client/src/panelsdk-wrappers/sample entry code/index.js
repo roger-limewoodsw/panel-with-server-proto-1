@@ -1,7 +1,7 @@
 // index.js - Complete implementation for Media Composer integration
 
 // Import necessary modules for gRPC communication with Media Composer
-import { CommandErrorType } from '../grpc-web/MCAPI_Types_pb.js';
+import { CommandErrorType } from '../panelsdk-bridge.js';
 import { importFileIntoAcclaimBin } from './import-to-bin.js';
 import { createSettings, getExportSettingsNameFromType } from './create-settings.js';
 import { getActiveSequenceId, nullMobId } from './get-active-service.js';

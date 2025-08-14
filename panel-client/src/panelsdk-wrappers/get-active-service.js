@@ -1,4 +1,4 @@
-import { GetViewerMobsRequest, GetViewerMobsRequestBody } from '../grpc-web/MCAPI_Types_pb.js';
+import { GetViewerMobsRequest, GetViewerMobsRequestBody } from '../panelsdk-bridge.js';
 
 import { getMetadata, getApiClient } from './api-client.js';
 import { displayText, displayTextDebug, displayTextError, displayTextFine, displayTextInfo, displayTextWarn} from './logging.js';
@@ -18,9 +18,11 @@ export function getActiveSequenceId() {
             return;
         }
         let mobId = nullMobId;
-        let request = new GetViewerMobsRequest();
-
-        let getViewerMobsRequestBody = new GetViewerMobsRequestBody;
+        const GetViewerMobsRequestClass = GetViewerMobsRequest();
+        const GetViewerMobsRequestBodyClass = GetViewerMobsRequestBody();
+        
+        let request = new GetViewerMobsRequestClass();
+        let getViewerMobsRequestBody = new GetViewerMobsRequestBodyClass();
         request.setBody(getViewerMobsRequestBody);
         displayTextDebug("submitting getViewerMobs request");
         mcapiclient.getViewerMobs(request, md, (err, response) => {

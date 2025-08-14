@@ -1,4 +1,4 @@
-import { ImportFileRequest, ImportFileRequestBody } from '../grpc-web/MCAPI_Types_pb.js';
+import { ImportFileRequest, ImportFileRequestBody } from '../panelsdk-bridge.js';
 import { getApiClient, getMetadata } from './api-client';
 import { displayTextInfo, displayTextError, displayTextDebug } from './logging.js';
 import { getImportSettingsName } from './create-settings';
@@ -17,9 +17,11 @@ export async function importFile(filepath, binName) {
         reject(new Error("API client or metadata is not initialized"));
         return;
       }
-      const request = new ImportFileRequest();
+      const ImportFileRequestClass = ImportFileRequest();
+      const ImportFileRequestBodyClass = ImportFileRequestBody();
+      const request = new ImportFileRequestClass();
       displayTextInfo("Importing file: " + filepath + " into bin: " + binName);
-      const body = new ImportFileRequestBody();
+      const body = new ImportFileRequestBodyClass();
       body.setFilePath(filepath);
       body.setImportSettingsName(getImportSettingsName());
       body.setDestinationBin(binName);

@@ -103,181 +103,87 @@ function updateConnectionStatus(text, type) {
     badge.className = `status-badge ${type}`;
 }
 
-// Get application info
-function getAppInfo() {
-    if (!grpcClient) {
-        console.error('❌ No gRPC client available');
-        addToEventLog('Error: No gRPC client available', 'error');
-        return;
-    }
-    
-    console.log('📡 Getting app info...');
+// Get application info using wrapper functions
+async function getAppInfo() {
+    console.log('📡 Getting app info using wrapper functions...');
     addToEventLog('Requesting app info...', 'info');
     
     try {
-        // Find constructors in the right location
-        let GetAppInfoRequestBody, GetAppInfoRequest;
+        // Import wrapper functions dynamically
+        const { getApiClient } = await import('./panelsdk-wrappers/api-client.js');
+        const { getActiveSequenceId } = await import('./panelsdk-wrappers/get-active-service.js');
         
-        if (window.proto.mcapi.GetAppInfoRequestBody) {
-            GetAppInfoRequestBody = window.proto.mcapi.GetAppInfoRequestBody;
-            GetAppInfoRequest = window.proto.mcapi.GetAppInfoRequest;
-        } else if (window.proto.GetAppInfoRequestBody) {
-            GetAppInfoRequestBody = window.proto.GetAppInfoRequestBody;
-            GetAppInfoRequest = window.proto.GetAppInfoRequest;
-        } else {
-            console.error('GetAppInfoRequestBody constructor not found!');
-            console.error('Available proto constructors:', Object.keys(window.proto));
-            console.error('Available proto.mcapi constructors:', Object.keys(window.proto.mcapi));
-            
-            // Try to find constructors with similar names
-            const protoKeys = Object.keys(window.proto);
-            const mcapiKeys = Object.keys(window.proto.mcapi);
-            const appInfoKeys = [...protoKeys, ...mcapiKeys].filter(key => key.includes('AppInfo'));
-            console.error('Keys containing "AppInfo":', appInfoKeys);
-            
-            throw new Error('GetAppInfoRequestBody constructor not found');
+        // Check if API client is initialized
+        const mcapiclient = getApiClient();
+        if (!mcapiclient) {
+            console.error('❌ API client not initialized');
+            addToEventLog('Error: API client not initialized', 'error');
+            document.getElementById('project-info').innerHTML = `
+                <p>❌ API client not initialized</p>
+                <p><small>Check if Panel SDK is properly loaded</small></p>
+            `;
+            return;
         }
         
-        // Create request with body
-        const requestBody = new GetAppInfoRequestBody();
-        const request = new GetAppInfoRequest();
-        request.setBody(requestBody);
+        // Try to get active sequence as a basic test
+        const activeSequenceId = await getActiveSequenceId();
+        console.log('✅ Active sequence ID:', activeSequenceId);
         
-        // Include access token in metadata (mcapi format)
-        const metadata = {};
-        if (accessToken) {
-            metadata['accessToken'] = accessToken;
-            console.log('🔑 Added access token to metadata');
-        }
+        addToEventLog('Panel SDK wrapper functions working', 'success');
         
-        console.log('📤 Sending GetAppInfo request...');
+        // Update project info display with basic connection info
+        document.getElementById('project-info').innerHTML = `
+            <p><strong>Panel SDK:</strong> Connected ✅</p>
+            <p><strong>Active Sequence:</strong> ${activeSequenceId !== "00000000-0000-0000-0000-000000000000" ? activeSequenceId : 'None'}</p>
+            <p><strong>Wrapper Functions:</strong> Available</p>
+        `;
         
-        // Make the gRPC call
-        grpcClient.getAppInfo(request, metadata, (error, response) => {
-            if (error) {
-                console.error('❌ GetAppInfo error:', error);
-                addToEventLog(`Error: ${error.message}`, 'error');
-                
-                // If we get a token error, show it
-                if (error.message && error.message.includes('token')) {
-                    addToEventLog('Note: Authentication may be required', 'warning');
-                }
-                
-                document.getElementById('project-info').innerHTML = `
-                    <p>❌ Error: ${error.message}</p>
-                    <p><small>Check console for details</small></p>
-                `;
-            } else {
-                console.log('✅ GetAppInfo response:', response);
-                
-                if (response && response.toObject) {
-                    const data = response.toObject();
-                    console.log('📊 App info data:', data);
-                    addToEventLog('App info received successfully', 'success');
-                    
-                    // Update project info display
-                    if (data.body) {
-                        document.getElementById('project-info').innerHTML = `
-                            <p><strong>Application:</strong> ${data.body.appName || 'Unknown'}</p>
-                            <p><strong>Version:</strong> ${data.body.appVersion || 'Unknown'}</p>
-                            <p><strong>API Version:</strong> ${data.body.sdkVersion || 'Unknown'}</p>
-                        `;
-                    }
-                } else {
-                    document.getElementById('project-info').innerHTML = `
-                        <p>⚠️ Received empty response</p>
-                    `;
-                }
-            }
-        });
     } catch (error) {
-        console.error('❌ Failed to create request:', error);
-        addToEventLog(`Failed to create request: ${error.message}`, 'error');
+        console.error('❌ Failed to use wrapper functions:', error);
+        addToEventLog(`Failed to use wrapper functions: ${error.message}`, 'error');
+        document.getElementById('project-info').innerHTML = `
+            <p>❌ Error: ${error.message}</p>
+            <p><small>Check console for details</small></p>
+        `;
     }
 }
 
-// Get all bins (streaming response)
-function getAllBins() {
-    if (!grpcClient) {
-        console.error('❌ No gRPC client available');
-        addToEventLog('Error: No gRPC client available', 'error');
-        return;
-    }
-    
-    console.log('📡 Getting all bins...');
+// Get all bins using wrapper functions
+async function getAllBins() {
+    console.log('📡 Getting all bins using wrapper functions...');
     addToEventLog('Requesting bin list...', 'info');
     
     try {
-        // Find constructors in the right location
-        let GetBinsRequestBody, GetBinsRequest;
+        // Import wrapper functions dynamically
+        const { getAllBins: getAllBinsWrapper } = await import('./panelsdk-wrappers/bin-service.js');
         
-        if (window.proto.mcapi.GetBinsRequestBody) {
-            GetBinsRequestBody = window.proto.mcapi.GetBinsRequestBody;
-            GetBinsRequest = window.proto.mcapi.GetBinsRequest;
-        } else if (window.proto.GetBinsRequestBody) {
-            GetBinsRequestBody = window.proto.GetBinsRequestBody;
-            GetBinsRequest = window.proto.GetBinsRequest;
+        // Get bins using wrapper function
+        const bins = await getAllBinsWrapper();
+        
+        console.log('✅ Retrieved bins:', bins);
+        addToEventLog(`Retrieved ${bins.length} bins total`, 'success');
+        
+        // Update bin display
+        if (bins.length > 0) {
+            const binList = bins.map(bin => 
+                `<li>${bin.body?.name || 'Unknown'} (${bin.body?.id || 'No ID'})</li>`
+            ).join('');
+            document.getElementById('bin-contents').innerHTML = `
+                <p><strong>Total bins:</strong> ${bins.length}</p>
+                <ul>${binList}</ul>
+            `;
         } else {
-            throw new Error('GetBinsRequestBody constructor not found');
+            document.getElementById('bin-contents').innerHTML = `
+                <p>No bins found</p>
+            `;
         }
-        
-        // Create request
-        const requestBody = new GetBinsRequestBody();
-        const request = new GetBinsRequest();
-        request.setBody(requestBody);
-        
-        // Include access token in metadata (mcapi format)
-        const metadata = {};
-        if (accessToken) {
-            metadata['accessToken'] = accessToken;
-        }
-        
-        console.log('📤 Sending GetBins request (streaming)...');
-        
-        // Make the streaming gRPC call
-        const stream = grpcClient.getBins(request, metadata);
-        
-        let binCount = 0;
-        const bins = [];
-        
-        stream.on('data', (response) => {
-            console.log('📦 Received bin data:', response);
-            if (response && response.toObject) {
-                const data = response.toObject();
-                bins.push(data);
-                binCount++;
-                addToEventLog(`Received bin ${binCount}: ${data.body?.name || 'Unknown'}`, 'success');
-            }
-        });
-        
-        stream.on('error', (error) => {
-            console.error('❌ Stream error:', error);
-            addToEventLog(`Stream error: ${error.message}`, 'error');
-        });
-        
-        stream.on('end', () => {
-            console.log('✅ Stream ended. Total bins:', binCount);
-            addToEventLog(`Received ${binCount} bins total`, 'success');
-            
-            // Update bin display
-            if (bins.length > 0) {
-                const binList = bins.map(bin => 
-                    `<li>${bin.body?.name || 'Unknown'} (${bin.body?.id || 'No ID'})</li>`
-                ).join('');
-                document.getElementById('bin-contents').innerHTML = `
-                    <p><strong>Total bins:</strong> ${binCount}</p>
-                    <ul>${binList}</ul>
-                `;
-            } else {
-                document.getElementById('bin-contents').innerHTML = `
-                    <p>No bins found</p>
-                `;
-            }
-        });
         
     } catch (error) {
-        console.error('❌ Failed to get bins:', error);
+        console.error('❌ Failed to get bins using wrapper:', error);
         addToEventLog(`Failed to get bins: ${error.message}`, 'error');
+        document.getElementById('bin-contents').innerHTML = `
+            <p>❌ Error: ${error.message}</p>
+        `;
     }
 }
 

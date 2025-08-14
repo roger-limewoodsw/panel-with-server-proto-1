@@ -137,6 +137,21 @@ if (globalThis.proto) {
     }
 }
 
+// Initialize the proto bridge and wrapper functions
+import { initProtoBridge } from './panelsdk-bridge.js';
+import { initApiClient } from './panelsdk-wrappers/api-client.js';
+
+// Initialize after protobuf loading
+setTimeout(async () => {
+    try {
+        await initProtoBridge();
+        initApiClient();
+        console.log('🎯 Panel SDK wrappers initialized');
+    } catch (error) {
+        console.error('❌ Failed to initialize Panel SDK wrappers:', error);
+    }
+}, 200);
+
 // Import styles
 import './styles.css';
 

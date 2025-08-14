@@ -1,11 +1,14 @@
-import { MCAPIClient } from '../grpc-web/MCAPI_grpc_web_pb.js';
+import { MCAPIClient } from '../panelsdk-bridge.js';
 
 let mcapiclient = null
 
 export function initApiClient() {
     // Setup MCAPI client
-    if (typeof mcapi !== 'undefined') {
-        mcapiclient = new MCAPIClient(mcapi.getGatewayServerAddress(), null, null);
+    if (typeof mcapi !== 'undefined' && window.proto && window.proto.mcapi && window.proto.mcapi.MCAPIClient) {
+        mcapiclient = new window.proto.mcapi.MCAPIClient(mcapi.getGatewayServerAddress(), null, null);
+        console.log('✅ MCAPI client initialized via wrapper');
+    } else {
+        console.warn('MCAPI client initialization failed - mcapi or proto not available');
     }
 }
 // Get metadata for API calls

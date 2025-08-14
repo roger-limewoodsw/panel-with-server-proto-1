@@ -1,5 +1,5 @@
 import { getApiClient, getMetadata } from "./api-client.js";
-import { GetMobInfoRequest, GetMobInfoRequestBody } from "../grpc-web/MCAPI_Types_pb.js";
+import { GetMobInfoRequest, GetMobInfoRequestBody } from "../panelsdk-bridge.js";
 import { displayTextInfo, displayTextDebug, displayTextError } from "./logging.js";
 
 // Function to get mob information and export it
@@ -21,8 +21,10 @@ export async function getMobInfo(mob_id, columnNames) {
       return;
     }
 
-    const request = new GetMobInfoRequest();
-    const requestBody = new GetMobInfoRequestBody();
+    const GetMobInfoRequestClass = GetMobInfoRequest();
+    const GetMobInfoRequestBodyClass = GetMobInfoRequestBody();
+    const request = new GetMobInfoRequestClass();
+    const requestBody = new GetMobInfoRequestBodyClass();
     const only_visible_columns = false;
     const includes_empty_columns = false; 
     requestBody.setMobId(mob_id);
